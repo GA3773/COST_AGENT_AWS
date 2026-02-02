@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+
+{% block title %}Cost Agent - EMR Optimization{% endblock %}
+
+{% block body %}
+<div class="app">
+    <header class="header">
+        <h1 class="header__title">COST AGENT</h1>
+        <p class="header__subtitle">EMR Instance Optimization</p>
+    </header>
+
+    <main class="chat" id="chat">
+        <div class="chat__messages" id="messages">
+            <div class="message message--agent">
+                <div class="message__content">
+                    Which cluster would you like to optimize? Type <strong>list clusters</strong> to see recent transient clusters, or enter a cluster name directly.
+                </div>
+            </div>
+        </div>
+
+        <div class="chat__approval" id="approval" style="display: none;">
+            <button class="btn btn--primary" id="btnApprove">Proceed with Optimization</button>
+            <button class="btn btn--secondary" id="btnCancel">Cancel</button>
+        </div>
+
+        <div class="chat__progress" id="progress" style="display: none;">
+            <div class="progress__indicator"></div>
+            <span class="progress__text" id="progressText"></span>
+        </div>
+    </main>
+
+    <footer class="input-bar">
+        <input
+            type="text"
+            class="input-bar__field"
+            id="userInput"
+            placeholder="Type a message..."
+            autocomplete="off"
+        >
+        <button class="btn btn--send" id="btnSend">Send</button>
+    </footer>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/agent.js') }}"></script>
+{% endblock %}
