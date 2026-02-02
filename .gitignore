@@ -21,6 +21,10 @@ build/
 .DS_Store
 Thumbs.db
 
+# Certificates (NEVER commit)
+*.pem
+azure_cert.pem
+
 # Data
 data/
 *.json

@@ -15,6 +15,12 @@ AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY", "")
 AZURE_OPENAI_DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4o")
 AZURE_OPENAI_API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION", "2024-10-21")
 
+# --- Azure Service Principal (hybrid auth with PEM certificate) ---
+AZURE_TENANT_ID = os.getenv("AZURE_TENANT_ID", "")
+AZURE_SPN_CLIENT_ID = os.getenv("AZURE_SPN_CLIENT_ID", "")
+AZURE_PEM_PATH = os.getenv("AZURE_PEM_PATH", "azure_cert.pem")
+AZURE_USER_ID = os.getenv("AZURE_USER_ID", "cost-agent")
+
 # --- AWS ---
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
 AWS_DEFAULT_REGION = os.getenv("AWS_DEFAULT_REGION", "us-east-1")

@@ -1,9 +1,6 @@
 """LangGraph workflow definition for the EMR cost optimization agent."""
 
-import functools
-
 from langchain_core.messages import SystemMessage
-from langchain_openai import AzureChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
@@ -21,12 +18,7 @@ from agent.nodes import (
 )
 from agent.prompts import SYSTEM_PROMPT
 from agent.state import AgentState
-from config import (
-    AZURE_OPENAI_API_KEY,
-    AZURE_OPENAI_API_VERSION,
-    AZURE_OPENAI_DEPLOYMENT,
-    AZURE_OPENAI_ENDPOINT,
-)
+from services.azure_openai import create_llm
 from tools import ALL_TOOLS
 
 
@@ -36,14 +28,8 @@ def build_graph():
     Returns:
         Compiled graph with MemorySaver checkpointer for interrupt/resume.
     """
-    # Create LLM
-    llm = AzureChatOpenAI(
-        azure_endpoint=AZURE_OPENAI_ENDPOINT,
-        api_key=AZURE_OPENAI_API_KEY,
-        api_version=AZURE_OPENAI_API_VERSION,
-        azure_deployment=AZURE_OPENAI_DEPLOYMENT,
-        temperature=0,
-    )
+    # Create LLM with hybrid auth (Service Principal + API key)
+    llm = create_llm()
 
     # Bind tools to LLM
     llm_with_tools = llm.bind_tools(ALL_TOOLS)

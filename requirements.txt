@@ -11,5 +11,8 @@ langchain>=0.3.0
 langchain-openai>=0.3.0
 langgraph>=0.2.0
 
+# Azure Identity (Service Principal + PEM certificate auth)
+azure-identity>=1.15.0
+
 # Utilities
 numpy>=1.24.0
