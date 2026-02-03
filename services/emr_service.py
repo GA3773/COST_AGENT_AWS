@@ -65,10 +65,12 @@ def list_instances(cluster_id: str, instance_fleet_id: str = None) -> list[dict]
 def get_transient_clusters() -> list[dict]:
     """List transient clusters from the last 24 hours.
 
-    Returns clusters that are TERMINATED or COMPLETED with runtime < 6 hours.
+    Returns TERMINATED clusters with runtime < 6 hours.
+    EMR valid states: STARTING, BOOTSTRAPPING, RUNNING, WAITING,
+    TERMINATING, TERMINATED, TERMINATED_WITH_ERRORS.
     """
     created_after = datetime.now(timezone.utc) - timedelta(hours=CLUSTER_LOOKBACK_HOURS)
-    states = ["TERMINATED", "COMPLETED", "TERMINATED_WITH_ERRORS"]
+    states = ["TERMINATED", "TERMINATED_WITH_ERRORS"]
 
     raw_clusters = list_clusters(created_after, states)
     transient = []
