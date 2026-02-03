@@ -4,7 +4,9 @@
 (function () {
     "use strict";
 
-    // Current thread ID (changes with each message, persists for approval flow)
+    // Persistent session ID (survives across multiple graph runs)
+    var sessionId = null;
+    // Current graph-run thread ID (changes with each message, persists for approval flow)
     var threadId = null;
     var eventSource = null;
     var inputLocked = false;
@@ -17,6 +19,14 @@
     var btnCancel = document.getElementById("btnCancel");
     var progressEl = document.getElementById("progress");
     var progressText = document.getElementById("progressText");
+
+    // Configure marked for safe rendering
+    if (typeof marked !== "undefined") {
+        marked.setOptions({
+            breaks: true,
+            gfm: true,
+        });
+    }
 
     // Send message
     btnSend.addEventListener("click", sendMessage);
@@ -50,7 +60,10 @@
         fetch("/api/agent/chat", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ message: text, thread_id: threadId }),
+            body: JSON.stringify({
+                message: text,
+                session_id: sessionId,
+            }),
         })
             .then(function (res) { return res.json(); })
             .then(function (data) {
@@ -60,7 +73,9 @@
                     hideProgress();
                     return;
                 }
-                // New thread_id each turn -- connect SSE immediately
+                // Persist the session ID from the server
+                sessionId = data.session_id;
+                // New thread_id for this graph run -- connect SSE
                 threadId = data.thread_id;
                 connectSSE(threadId);
             })
@@ -150,7 +165,6 @@
         };
 
         eventSource.onerror = function () {
-            // Only treat as a real error if we haven't received a terminal event
             closeSSE();
             hideProgress();
             setInputEnabled(true);
@@ -164,6 +178,18 @@
         }
     }
 
+    function renderMarkdown(text) {
+        if (typeof marked !== "undefined" && typeof DOMPurify !== "undefined") {
+            return DOMPurify.sanitize(marked.parse(text));
+        }
+        // Fallback: escape HTML and preserve whitespace
+        var escaped = text
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;");
+        return escaped;
+    }
+
     function appendMessage(role, content) {
         if (!content || !content.trim()) return;
 
@@ -172,7 +198,12 @@
 
         var inner = document.createElement("div");
         inner.className = "message__content";
-        inner.textContent = content;
+
+        if (role === "agent") {
+            inner.innerHTML = renderMarkdown(content);
+        } else {
+            inner.textContent = content;
+        }
 
         div.appendChild(inner);
         messagesEl.appendChild(div);
