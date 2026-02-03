@@ -328,13 +328,13 @@ def analyze_node_type(node_type: str, instance_type: str,
     fleet_cost_per_hour = current_cost_per_hour * instance_count
     run_cost = fleet_cost_per_hour * runtime_hours if runtime_hours else None
 
-    # Find alternatives (even if right-sized, to show options)
+    # Find all cheaper alternatives meeting resource requirements
     alternatives = find_alternatives(
         required["required_vcpu"],
         required["required_memory_gb"],
         instance_type,
         current_cost_per_hour,
-        max_results=3,
+        max_results=5,
     )
     # Only keep alternatives that are actually cheaper
     alternatives = [a for a in alternatives if a["price_per_hour"] < current_cost_per_hour]
@@ -343,7 +343,7 @@ def analyze_node_type(node_type: str, instance_type: str,
     cpu_over_ratio = round(provisioned["vcpu"] / max(required["required_vcpu"], 0.1), 1)
     mem_over_ratio = round(provisioned["memory_gb"] / max(required["required_memory_gb"], 0.1), 1)
 
-    # Near-miss explanations when no cheaper alternatives exist and right-sized + asymmetric
+    # Near-miss explanations when no cheaper alternatives exist and asymmetric
     near_misses = None
     if not alternatives and per_dimension["asymmetric"]:
         near_misses = find_near_miss_alternatives(
@@ -351,6 +351,48 @@ def analyze_node_type(node_type: str, instance_type: str,
             required["required_memory_gb"],
             instance_type,
         )
+
+    # Build unified options list: all viable cheaper instances, best-fit marked
+    best_fit_type = (recommendation.get("recommended_type")
+                     if recommendation and recommendation.get("recommended_type") else None)
+    options = []
+    seen = set()
+    for alt in alternatives:
+        itype = alt["instance_type"]
+        if itype in seen:
+            continue
+        seen.add(itype)
+        options.append({
+            "instance_type": itype,
+            "vcpu": alt["vcpu"],
+            "memory_gb": alt["memory_gb"],
+            "price_per_hour": alt["price_per_hour"],
+            "savings_pct": alt["savings_pct"],
+            "arch": alt["arch"],
+            "family": alt["family"],
+            "best_fit": itype == best_fit_type,
+        })
+    # Ensure the recommendation is in the options list even if find_alternatives
+    # didn't return it (e.g., same-family pick not in top N cross-family results)
+    if best_fit_type and best_fit_type not in seen:
+        rec_spec = get_instance_spec(best_fit_type)
+        if rec_spec:
+            savings_pct = round(
+                (current_cost_per_hour - rec_spec["price_per_hour"])
+                / current_cost_per_hour * 100, 1
+            ) if current_cost_per_hour > 0 else 0
+            options.insert(0, {
+                "instance_type": best_fit_type,
+                "vcpu": rec_spec["vcpu"],
+                "memory_gb": rec_spec["memory_gb"],
+                "price_per_hour": rec_spec["price_per_hour"],
+                "savings_pct": savings_pct,
+                "arch": rec_spec["arch"],
+                "family": rec_spec["family"],
+                "best_fit": True,
+            })
+    # Sort: best_fit first, then by price ascending
+    options.sort(key=lambda x: (not x["best_fit"], x["price_per_hour"]))
 
     result = {
         "node_type": node_type,
@@ -366,7 +408,7 @@ def analyze_node_type(node_type: str, instance_type: str,
         "current_cost_per_hour": current_cost_per_hour,
         "fleet_cost_per_hour": fleet_cost_per_hour,
         "run_cost": run_cost,
-        "alternatives": alternatives,
+        "options": options,
         "near_misses": near_misses,
         "recommendation": recommendation,
     }

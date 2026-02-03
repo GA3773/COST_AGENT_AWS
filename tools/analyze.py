@@ -180,48 +180,38 @@ def _format_analysis(results: dict) -> str:
         lines.append(f"  Status: {status_note}")
         lines.append("")
 
-        # Recommendation
-        rec = analysis.get("recommendation")
-        if rec:
-            if rec.get("recommendation_kind") == "none_cheaper":
-                lines.append("  Recommendation: No cheaper alternative found")
-                if rec.get("explanation"):
-                    for exp_line in rec["explanation"].split("\n"):
-                        lines.append(f"  {exp_line}")
-            else:
-                lines.append(
-                    f"  Recommendation: {instance_type} -> "
-                    f"{rec['recommended_type']} ({rec['recommendation_kind']})"
-                )
-                lines.append(f"  Savings: {rec['savings_percent']}% per instance-hour")
-                if rec.get("arch_change"):
-                    lines.append(
-                        f"  Architecture change: {rec['current_arch']} -> "
-                        f"{rec['recommended_arch']}"
-                    )
-        else:
-            if analysis["sizing_status"] == "right_sized":
-                lines.append("  Recommendation: No change needed (right-sized)")
-            elif analysis["sizing_status"] == "undersized":
-                lines.append("  Recommendation: Consider upsizing (out of scope)")
-            else:
-                lines.append("  Recommendation: No cheaper alternative found")
-        lines.append("")
-
-        # Alternatives table
-        alternatives = analysis.get("alternatives", [])
+        # Options table: all viable cheaper instances, best-fit marked
+        options = analysis.get("options", [])
         near_misses = analysis.get("near_misses")
-        if alternatives:
-            lines.append("  Alternatives:")
-            for alt in alternatives:
+        rec = analysis.get("recommendation")
+
+        if options:
+            lines.append("  Options:")
+            for i, opt in enumerate(options, 1):
+                marker = " <-- BEST FIT" if opt.get("best_fit") else ""
+                fleet_savings = opt["savings_pct"]
+                arch_label = "arm64" if opt["arch"] == "arm64" else "x86_64"
                 lines.append(
-                    f"    {alt['instance_type']} ({alt['vcpu']} vCPU, "
-                    f"{alt['memory_gb']} GB, ${alt['price_per_hour']}/hr) "
-                    f"-- {alt['savings_pct']}% savings"
+                    f"    {i}. {opt['instance_type']} "
+                    f"({opt['vcpu']} vCPU, {opt['memory_gb']} GB, "
+                    f"${opt['price_per_hour']}/hr, {arch_label}) "
+                    f"-- {fleet_savings}% savings{marker}"
                 )
             lines.append("")
+            if rec and rec.get("arch_change"):
+                lines.append(
+                    f"  Note: Best fit changes architecture "
+                    f"{rec['current_arch']} -> {rec['recommended_arch']}"
+                )
+                lines.append("")
+        elif rec and rec.get("recommendation_kind") == "none_cheaper":
+            lines.append("  Options: No cheaper alternative found")
+            if rec.get("explanation"):
+                for exp_line in rec["explanation"].split("\n"):
+                    lines.append(f"  {exp_line}")
+            lines.append("")
         elif near_misses:
-            lines.append("  Alternatives: None cheaper found.")
+            lines.append("  Options: None cheaper found.")
             for nm in near_misses:
                 shortfalls = []
                 if nm.get("shortfall_mem", 0) > 0:
@@ -238,6 +228,14 @@ def _format_analysis(results: dict) -> str:
                         f"{nm['memory_gb']} GB, ${nm['price_per_hour']}/hr) "
                         f"-- {'; '.join(shortfalls)}"
                     )
+            lines.append("")
+        else:
+            if analysis["sizing_status"] == "right_sized":
+                lines.append("  No change needed (right-sized)")
+            elif analysis["sizing_status"] == "undersized":
+                lines.append("  Consider upsizing (out of scope for cost optimization)")
+            else:
+                lines.append("  No cheaper alternative found")
             lines.append("")
 
     return "\n".join(lines)
