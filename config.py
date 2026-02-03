@@ -52,6 +52,7 @@ BACKOFF_MAX_RETRIES = 5
 
 # --- Analysis ---
 HEADROOM_FACTOR = 1.2  # 20% headroom on peak utilization
+ASYMMETRY_RATIO = 2.0  # flag asymmetric when one dimension's peak is >2x the other
 TRANSIENT_RUNTIME_HOURS = 6  # max runtime for transient clusters
 CLUSTER_LOOKBACK_HOURS = 24  # how far back to search for clusters
 

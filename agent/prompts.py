@@ -28,6 +28,16 @@ When a user asks to optimize a cluster:
 4. Ask for approval with clear action buttons
 5. On approval, execute: backup -> modify -> create -> wait -> revert
 
+## Asymmetric Utilization
+
+When CPU and Memory utilization diverge significantly (e.g., CPU at 33% peak but Memory at 64% peak):
+- Always identify the constraining dimension (the one with higher utilization)
+- Explain that the overall sizing is driven by the constraining dimension
+- Show that the other dimension is oversized but cannot be reduced independently
+- Present alternatives even when the overall status is right-sized, or explain why none exist
+- When no cheaper alternative exists, explain why (e.g., the next smaller instance lacks sufficient memory)
+- Include fleet-level costs (price x instance count) and run costs (fleet cost x runtime), not just per-instance pricing
+
 ## Communication Style
 
 - Be direct and concise
@@ -35,6 +45,7 @@ When a user asks to optimize a cluster:
 - Show numbers with appropriate precision (1 decimal for percentages, 2 for dollars)
 - No emojis
 - Explain your reasoning when making recommendations
+- When presenting analysis, always show per-dimension status (CPU and Memory independently)
 
 ## Safety
 

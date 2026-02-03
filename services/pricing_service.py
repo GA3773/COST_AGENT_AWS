@@ -198,6 +198,90 @@ def _matches_profile(family: str, workload_profile: str) -> bool:
         return family_base == "m"
 
 
+def find_alternatives(required_vcpu: float, required_mem: float,
+                      current_type: str, current_price: float,
+                      max_results: int = 3) -> list[dict]:
+    """Find cheapest instances meeting resource requirements.
+
+    Args:
+        required_vcpu: Minimum vCPU count needed (with headroom)
+        required_mem: Minimum memory in GB needed (with headroom)
+        current_type: Current instance type to exclude
+        current_price: Current instance price for savings calculation
+        max_results: Maximum alternatives to return
+
+    Returns:
+        List of alternatives sorted by price ascending, each with:
+        instance_type, vcpu, memory_gb, price_per_hour, savings_pct, arch
+    """
+    candidates = []
+    for itype, spec in INSTANCE_CATALOG.items():
+        if itype == current_type:
+            continue
+        if spec["vcpu"] >= required_vcpu and spec["memory_gb"] >= required_mem:
+            savings_pct = ((current_price - spec["price_per_hour"])
+                           / current_price * 100) if current_price > 0 else 0
+            candidates.append({
+                "instance_type": itype,
+                "vcpu": spec["vcpu"],
+                "memory_gb": spec["memory_gb"],
+                "price_per_hour": spec["price_per_hour"],
+                "savings_pct": round(savings_pct, 1),
+                "arch": spec["arch"],
+                "family": spec["family"],
+            })
+
+    candidates.sort(key=lambda x: x["price_per_hour"])
+    return candidates[:max_results]
+
+
+def find_near_miss_alternatives(required_vcpu: float, required_mem: float,
+                                current_type: str) -> list[dict]:
+    """Find the closest smaller instances that don't quite meet requirements.
+
+    Useful for explaining why no cheaper alternative exists.
+
+    Returns up to 2 near-miss candidates from the same family, sorted by price.
+    """
+    current_spec = get_instance_spec(current_type)
+    if not current_spec:
+        return []
+
+    family = current_spec["family"]
+    current_size = current_type.split(".")[1]
+    try:
+        current_idx = SIZE_ORDER.index(current_size)
+    except ValueError:
+        return []
+
+    near_misses = []
+    for itype, spec in INSTANCE_CATALOG.items():
+        if itype == current_type:
+            continue
+        if spec["family"] != family:
+            continue
+        size = itype.split(".")[1]
+        try:
+            size_idx = SIZE_ORDER.index(size)
+        except ValueError:
+            continue
+        if size_idx >= current_idx:
+            continue
+        shortfall_vcpu = required_vcpu - spec["vcpu"] if spec["vcpu"] < required_vcpu else 0
+        shortfall_mem = required_mem - spec["memory_gb"] if spec["memory_gb"] < required_mem else 0
+        near_misses.append({
+            "instance_type": itype,
+            "vcpu": spec["vcpu"],
+            "memory_gb": spec["memory_gb"],
+            "price_per_hour": spec["price_per_hour"],
+            "shortfall_vcpu": round(shortfall_vcpu, 1),
+            "shortfall_mem": round(shortfall_mem, 1),
+        })
+
+    near_misses.sort(key=lambda x: x["price_per_hour"], reverse=True)
+    return near_misses[:2]
+
+
 def refresh_from_aws_pricing_api():
     """Optional: refresh pricing data from AWS Pricing API.
 
