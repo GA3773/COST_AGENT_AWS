@@ -13,7 +13,7 @@ from config import get_logger
 app = Flask(__name__)
 logger = get_logger(__name__)
 
-# In-memory session storage: thread_id -> {graph, config, status_queue, messages}
+# In-memory session storage: thread_id -> session dict
 sessions = {}
 graph = None
 
@@ -41,22 +41,26 @@ def chat():
     """
     data = request.get_json()
     user_message = data.get("message", "").strip()
-    thread_id = data.get("thread_id") or str(uuid.uuid4())
+    old_thread_id = data.get("thread_id")
 
     if not user_message:
         return jsonify({"error": "Empty message"}), 400
 
-    # Get or create session
-    if thread_id not in sessions:
-        sessions[thread_id] = {
-            "status_queue": queue.Queue(),
-            "messages": [],
-            "completed": False,
-            "awaiting_approval": False,
-        }
+    # Always create a fresh thread for each conversation turn.
+    # This avoids LLM message history corruption (dangling tool_calls)
+    # from previous graph runs on the same thread.
+    # The only exception is when resuming an interrupted graph (approval flow),
+    # which goes through /api/agent/approve instead.
+    thread_id = str(uuid.uuid4())
+
+    sessions[thread_id] = {
+        "status_queue": queue.Queue(),
+        "msg_count": 0,  # Track how many AI messages we've sent via SSE
+        "completed": False,
+        "awaiting_approval": False,
+    }
 
     session = sessions[thread_id]
-    session["messages"].append({"role": "user", "content": user_message})
 
     # Run graph in background thread
     config = {"configurable": {"thread_id": thread_id}}
@@ -67,22 +71,27 @@ def chat():
             _push_status(thread_id, "processing", "Agent is thinking...")
 
             inputs = {"messages": [("user", user_message)]}
-            for event in g.stream(inputs, config, stream_mode="values"):
-                messages = event.get("messages", [])
-                phase = event.get("current_phase", "")
 
-                if phase:
-                    _push_status(thread_id, "phase", phase)
+            # Use stream_mode="updates" to get only the NEW state changes
+            # from each node, not the full accumulated state.
+            for event in g.stream(inputs, config, stream_mode="updates"):
+                for node_name, node_output in event.items():
+                    # Send phase updates
+                    phase = node_output.get("current_phase", "")
+                    if phase:
+                        _push_status(thread_id, "phase", phase)
 
-                # Send new AI messages to the client
-                for msg in messages:
-                    if hasattr(msg, "content") and msg.content:
-                        if hasattr(msg, "type") and msg.type == "ai":
-                            session["messages"].append({
-                                "role": "agent",
-                                "content": msg.content,
-                            })
-                            _push_status(thread_id, "message", msg.content)
+                    # Send only the NEW messages produced by this node
+                    new_messages = node_output.get("messages", [])
+                    for msg in new_messages:
+                        if hasattr(msg, "content") and msg.content:
+                            if hasattr(msg, "type") and msg.type == "ai":
+                                # Skip AI messages that only contain tool_calls
+                                # (no human-readable content)
+                                if hasattr(msg, "tool_calls") and msg.tool_calls:
+                                    if not msg.content.strip():
+                                        continue
+                                _push_status(thread_id, "message", msg.content)
 
             # Check if graph is interrupted (awaiting approval)
             snapshot = g.get_state(config)
@@ -97,6 +106,7 @@ def chat():
         except Exception as e:
             logger.error(f"Graph execution error: {e}", exc_info=True)
             _push_status(thread_id, "error", str(e))
+            session["completed"] = True
 
     thread = threading.Thread(target=run_graph, daemon=True)
     thread.start()
@@ -129,7 +139,7 @@ def approve():
         session["completed"] = True
         return jsonify({"status": "cancelled"})
 
-    # Resume the graph
+    # Resume the interrupted graph on the SAME thread
     def resume_graph():
         try:
             g = get_graph()
@@ -138,21 +148,17 @@ def approve():
             # Update state with approval
             g.update_state(config, {"human_approved": True})
 
-            for event in g.stream(None, config, stream_mode="values"):
-                messages = event.get("messages", [])
-                phase = event.get("current_phase", "")
+            for event in g.stream(None, config, stream_mode="updates"):
+                for node_name, node_output in event.items():
+                    phase = node_output.get("current_phase", "")
+                    if phase:
+                        _push_status(thread_id, "phase", phase)
 
-                if phase:
-                    _push_status(thread_id, "phase", phase)
-
-                for msg in messages:
-                    if hasattr(msg, "content") and msg.content:
-                        if hasattr(msg, "type") and msg.type == "ai":
-                            session["messages"].append({
-                                "role": "agent",
-                                "content": msg.content,
-                            })
-                            _push_status(thread_id, "message", msg.content)
+                    new_messages = node_output.get("messages", [])
+                    for msg in new_messages:
+                        if hasattr(msg, "content") and msg.content:
+                            if hasattr(msg, "type") and msg.type == "ai":
+                                _push_status(thread_id, "message", msg.content)
 
             session["completed"] = True
             _push_status(thread_id, "complete", "Optimization complete.")
@@ -160,6 +166,7 @@ def approve():
         except Exception as e:
             logger.error(f"Resume execution error: {e}", exc_info=True)
             _push_status(thread_id, "error", str(e))
+            session["completed"] = True
 
     thread = threading.Thread(target=resume_graph, daemon=True)
     thread.start()
@@ -189,6 +196,13 @@ def status_stream(thread_id):
                 yield f"data: {json.dumps({'type': 'keepalive'})}\n\n"
 
                 if session.get("completed"):
+                    # Drain any remaining events
+                    while not q.empty():
+                        try:
+                            event = q.get_nowait()
+                            yield f"data: {json.dumps(event)}\n\n"
+                        except queue.Empty:
+                            break
                     break
 
     return Response(
@@ -197,6 +211,7 @@ def status_stream(thread_id):
         headers={
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
         },
     )
 

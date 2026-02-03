@@ -4,17 +4,19 @@
 (function () {
     "use strict";
 
-    let threadId = null;
-    let eventSource = null;
+    // Current thread ID (changes with each message, persists for approval flow)
+    var threadId = null;
+    var eventSource = null;
+    var inputLocked = false;
 
-    const messagesEl = document.getElementById("messages");
-    const inputEl = document.getElementById("userInput");
-    const btnSend = document.getElementById("btnSend");
-    const approvalEl = document.getElementById("approval");
-    const btnApprove = document.getElementById("btnApprove");
-    const btnCancel = document.getElementById("btnCancel");
-    const progressEl = document.getElementById("progress");
-    const progressText = document.getElementById("progressText");
+    var messagesEl = document.getElementById("messages");
+    var inputEl = document.getElementById("userInput");
+    var btnSend = document.getElementById("btnSend");
+    var approvalEl = document.getElementById("approval");
+    var btnApprove = document.getElementById("btnApprove");
+    var btnCancel = document.getElementById("btnCancel");
+    var progressEl = document.getElementById("progress");
+    var progressText = document.getElementById("progressText");
 
     // Send message
     btnSend.addEventListener("click", sendMessage);
@@ -35,12 +37,15 @@
 
     function sendMessage() {
         var text = inputEl.value.trim();
-        if (!text) return;
+        if (!text || inputLocked) return;
 
         appendMessage("user", text);
         inputEl.value = "";
         setInputEnabled(false);
         showProgress("Sending...");
+
+        // Close any existing SSE before starting a new request
+        closeSSE();
 
         fetch("/api/agent/chat", {
             method: "POST",
@@ -55,6 +60,7 @@
                     hideProgress();
                     return;
                 }
+                // New thread_id each turn -- connect SSE immediately
                 threadId = data.thread_id;
                 connectSSE(threadId);
             })
@@ -81,7 +87,7 @@
                     hideProgress();
                     setInputEnabled(true);
                 } else {
-                    // SSE will continue to stream updates
+                    // Reconnect SSE on the same thread for the resumed graph
                     connectSSE(threadId);
                 }
             })
@@ -93,18 +99,25 @@
     }
 
     function connectSSE(tid) {
-        if (eventSource) {
-            eventSource.close();
-        }
+        closeSSE();
 
         eventSource = new EventSource("/api/agent/status/" + tid);
 
         eventSource.onmessage = function (event) {
-            var data = JSON.parse(event.data);
+            var data;
+            try {
+                data = JSON.parse(event.data);
+            } catch (e) {
+                return;
+            }
 
             switch (data.type) {
                 case "message":
                     appendMessage("agent", data.content);
+                    showProgress("Agent is working...");
+                    break;
+                case "processing":
+                    showProgress(data.content);
                     break;
                 case "phase":
                     updateProgress(data.content);
@@ -137,6 +150,7 @@
         };
 
         eventSource.onerror = function () {
+            // Only treat as a real error if we haven't received a terminal event
             closeSSE();
             hideProgress();
             setInputEnabled(true);
@@ -151,6 +165,8 @@
     }
 
     function appendMessage(role, content) {
+        if (!content || !content.trim()) return;
+
         var div = document.createElement("div");
         div.className = "message message--" + role;
 
@@ -193,6 +209,7 @@
     }
 
     function setInputEnabled(enabled) {
+        inputLocked = !enabled;
         inputEl.disabled = !enabled;
         btnSend.disabled = !enabled;
         if (enabled) {
