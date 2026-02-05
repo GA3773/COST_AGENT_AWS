@@ -59,16 +59,21 @@ def extract_analysis_node(state: dict) -> dict:
 def backup_node(state: dict) -> dict:
     """Back up the current Parameter Store configuration before modification."""
     if state.get("error"):
+        logger.info("[BACKUP_NODE] Skipping due to prior error")
         return {}
 
     cluster_name = state.get("cluster_name")
     if not cluster_name:
+        logger.error("[BACKUP_NODE] No cluster_name in state")
         return {"error": "No cluster_name set in state"}
+
+    logger.info(f"[BACKUP_NODE] Backing up param store for cluster={cluster_name}")
 
     try:
         from tools.param_store import get_param_store_config
 
         result = get_param_store_config.invoke({"cluster_name": cluster_name})
+        logger.info(f"[BACKUP_NODE] Successfully backed up config for cluster={cluster_name}")
         return {
             "original_config_backup": result["raw_value"],
             "param_store_config": result["config"],
@@ -76,6 +81,7 @@ def backup_node(state: dict) -> dict:
             "messages": [AIMessage(content=f"Backed up Parameter Store config for {cluster_name}.")],
         }
     except Exception as e:
+        logger.error(f"[BACKUP_NODE] Failed to backup: {e}")
         return {
             "error": f"Backup failed: {e}",
             "messages": [AIMessage(content=f"Failed to backup config: {e}")],
@@ -85,11 +91,13 @@ def backup_node(state: dict) -> dict:
 def modify_node(state: dict) -> dict:
     """Modify Parameter Store with recommended instance types."""
     if state.get("error"):
+        logger.info("[MODIFY_NODE] Skipping due to prior error")
         return {}
 
     cluster_name = state.get("cluster_name")
     core_rec = state.get("core_recommendation", {})
     task_rec = state.get("task_recommendation", {})
+    logger.info(f"[MODIFY_NODE] Starting modification for cluster={cluster_name}")
 
     core_type = core_rec.get("recommended_type", "") if core_rec else ""
     task_type = task_rec.get("recommended_type", "") if task_rec else ""
@@ -123,11 +131,13 @@ def modify_node(state: dict) -> dict:
         if task_type:
             changes.append(f"TASK: {task_rec.get('instance_type', '?')} -> {task_type}")
 
+        logger.info(f"[MODIFY_NODE] Successfully modified param store: {changes}")
         return {
             "current_phase": "modified",
             "messages": [AIMessage(content=f"Modified Parameter Store: {'; '.join(changes)}")],
         }
     except Exception as e:
+        logger.error(f"[MODIFY_NODE] Failed to modify: {e}")
         return {
             "error": f"Modify failed: {e}",
             "messages": [AIMessage(content=f"Failed to modify Parameter Store: {e}")],
@@ -137,19 +147,31 @@ def modify_node(state: dict) -> dict:
 def create_node(state: dict) -> dict:
     """Invoke Lambda to create the test cluster."""
     if state.get("error"):
+        logger.info("[CREATE_NODE] Skipping due to prior error")
         return {}
 
     cluster_name = state.get("cluster_name")
+    logger.info(f"[CREATE_NODE] Invoking Lambda for cluster={cluster_name}")
 
     try:
         from tools.lambda_operations import invoke_cluster_lambda
 
         result = invoke_cluster_lambda.invoke({"cluster_name": cluster_name})
+        logger.info(f"[CREATE_NODE] Lambda response: {result}")
 
         # Parse cluster ID from result
         new_cluster_id = None
         if "Cluster ID:" in result:
             new_cluster_id = result.split("Cluster ID:")[-1].strip()
+
+        logger.info(f"[CREATE_NODE] Parsed cluster_id={new_cluster_id}")
+
+        if not new_cluster_id or new_cluster_id == "unknown":
+            logger.error(f"[CREATE_NODE] Failed to parse cluster ID from Lambda response")
+            return {
+                "error": f"Lambda did not return a valid cluster ID: {result}",
+                "messages": [AIMessage(content=f"Failed to get cluster ID from Lambda: {result}")],
+            }
 
         return {
             "new_cluster_id": new_cluster_id,
@@ -157,6 +179,7 @@ def create_node(state: dict) -> dict:
             "messages": [AIMessage(content=f"Cluster creation triggered. {result}")],
         }
     except Exception as e:
+        logger.error(f"[CREATE_NODE] Exception: {e}")
         return {
             "error": f"Create failed: {e}",
             "messages": [AIMessage(content=f"Failed to create cluster: {e}")],
@@ -164,16 +187,25 @@ def create_node(state: dict) -> dict:
 
 
 def wait_node(state: dict) -> dict:
-    """Poll cluster status until it reaches WAITING/RUNNING or fails."""
+    """Poll cluster status until it reaches WAITING/RUNNING or fails.
+
+    This node MUST complete before Parameter Store is reverted, as the cluster
+    reads the config during bootstrap which can take 10+ minutes.
+    """
     if state.get("error"):
+        logger.info("[WAIT_NODE] Skipping due to prior error")
         return {}
 
     new_cluster_id = state.get("new_cluster_id")
     if not new_cluster_id:
+        logger.error("[WAIT_NODE] No cluster ID available")
         return {
             "error": "No new cluster ID available",
             "messages": [AIMessage(content="No cluster ID to monitor.")],
         }
+
+    logger.info(f"[WAIT_NODE] Starting to poll cluster {new_cluster_id}, "
+                f"max_wait={CLUSTER_POLL_MAX_WAIT}s, interval={CLUSTER_POLL_INTERVAL}s")
 
     from tools.emr_operations import check_cluster_status
 
@@ -184,6 +216,7 @@ def wait_node(state: dict) -> dict:
         try:
             result = check_cluster_status.invoke({"cluster_id": new_cluster_id})
         except Exception as e:
+            logger.error(f"[WAIT_NODE] Status check failed: {e}")
             return {
                 "error": f"Status check failed: {e}",
                 "new_cluster_status": "CHECK_FAILED",
@@ -199,6 +232,7 @@ def wait_node(state: dict) -> dict:
 
         if current_status != last_status:
             last_status = current_status
+            logger.info(f"[WAIT_NODE] Cluster {new_cluster_id} status: {current_status} (elapsed={elapsed}s)")
             audit.info(
                 "Cluster status change",
                 extra={"audit_data": {
@@ -210,6 +244,7 @@ def wait_node(state: dict) -> dict:
             )
 
         if current_status in ("WAITING", "RUNNING"):
+            logger.info(f"[WAIT_NODE] Cluster {new_cluster_id} is READY ({current_status}), safe to revert param store")
             return {
                 "new_cluster_status": current_status,
                 "current_phase": "cluster_ready",
@@ -219,6 +254,7 @@ def wait_node(state: dict) -> dict:
             }
 
         if current_status in ("TERMINATED", "TERMINATED_WITH_ERRORS"):
+            logger.error(f"[WAIT_NODE] Cluster {new_cluster_id} terminated unexpectedly: {current_status}")
             return {
                 "new_cluster_status": current_status,
                 "error": f"Cluster terminated unexpectedly: {current_status}",
@@ -230,6 +266,7 @@ def wait_node(state: dict) -> dict:
         time.sleep(CLUSTER_POLL_INTERVAL)
         elapsed += CLUSTER_POLL_INTERVAL
 
+    logger.error(f"[WAIT_NODE] Timed out waiting for cluster {new_cluster_id} after {elapsed}s")
     return {
         "new_cluster_status": "TIMEOUT",
         "error": "Cluster did not reach ready state within timeout",
@@ -238,11 +275,16 @@ def wait_node(state: dict) -> dict:
 
 
 def revert_node(state: dict) -> dict:
-    """Revert Parameter Store to original config. Always runs."""
+    """Revert Parameter Store to original config. Always runs after cluster is ready."""
     cluster_name = state.get("cluster_name")
     original = state.get("original_config_backup")
+    cluster_status = state.get("new_cluster_status", "unknown")
+
+    logger.info(f"[REVERT_NODE] Starting revert for cluster={cluster_name}, "
+                f"cluster_status={cluster_status}")
 
     if not cluster_name or not original:
+        logger.warning("[REVERT_NODE] Skipping - no backup available")
         return {
             "config_reverted": False,
             "current_phase": "revert_skipped",
@@ -258,12 +300,14 @@ def revert_node(state: dict) -> dict:
             "cluster_name": cluster_name,
             "original_value": original,
         })
+        logger.info(f"[REVERT_NODE] Successfully reverted param store for cluster={cluster_name}")
         return {
             "config_reverted": True,
             "current_phase": "reverted",
             "messages": [AIMessage(content=result)],
         }
     except Exception as e:
+        logger.error(f"[REVERT_NODE] CRITICAL - Failed to revert: {e}")
         return {
             "config_reverted": False,
             "current_phase": "revert_failed",
