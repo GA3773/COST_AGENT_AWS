@@ -323,13 +323,19 @@
         }
 
         // Create step - Lambda invocation
+        // If we see Lambda invocation, it means approval and modify already happened
         if ((lowerContent.includes("invoke") && lowerContent.includes("lambda")) ||
             (lowerContent.includes("creating") && lowerContent.includes("cluster")) ||
-            lowerContent.includes("lambda invocation")) {
-            updateSubwayGraph({ modify: "completed", create: "in_progress" });
+            lowerContent.includes("lambda invocation") ||
+            lowerContent.includes("optimization process") && lowerContent.includes("initiated")) {
+            updateSubwayGraph({ approval: "approved", modify: "completed", create: "in_progress" });
+            approvalLabel.textContent = "Approved";
         }
-        if (lowerContent.includes("lambda") && (lowerContent.includes("success") || lowerContent.includes("successfully"))) {
-            updateSubwayGraph({ create: "completed", monitor: "in_progress" });
+        // Lambda success - cascade all previous steps as completed
+        if ((lowerContent.includes("status:") && lowerContent.includes("success")) ||
+            (lowerContent.includes("successfully submitted"))) {
+            updateSubwayGraph({ approval: "approved", modify: "completed", create: "completed", monitor: "in_progress" });
+            approvalLabel.textContent = "Approved";
         }
 
         // Monitor step - waiting for cluster
