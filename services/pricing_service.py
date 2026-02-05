@@ -42,6 +42,20 @@ INSTANCE_CATALOG = {
     "m7g.8xlarge":  {"vcpu": 32, "memory_gb": 128, "price_per_hour": 1.306, "family": "m7g", "arch": "arm64"},
     "m7g.12xlarge": {"vcpu": 48, "memory_gb": 192, "price_per_hour": 1.958, "family": "m7g", "arch": "arm64"},
     "m7g.16xlarge": {"vcpu": 64, "memory_gb": 256, "price_per_hour": 2.611, "family": "m7g", "arch": "arm64"},
+    # M6a - General Purpose (AMD)
+    "m6a.xlarge":   {"vcpu": 4,  "memory_gb": 16,  "price_per_hour": 0.173, "family": "m6a", "arch": "x86_64"},
+    "m6a.2xlarge":  {"vcpu": 8,  "memory_gb": 32,  "price_per_hour": 0.346, "family": "m6a", "arch": "x86_64"},
+    "m6a.4xlarge":  {"vcpu": 16, "memory_gb": 64,  "price_per_hour": 0.691, "family": "m6a", "arch": "x86_64"},
+    "m6a.8xlarge":  {"vcpu": 32, "memory_gb": 128, "price_per_hour": 1.382, "family": "m6a", "arch": "x86_64"},
+    "m6a.12xlarge": {"vcpu": 48, "memory_gb": 192, "price_per_hour": 2.074, "family": "m6a", "arch": "x86_64"},
+    "m6a.16xlarge": {"vcpu": 64, "memory_gb": 256, "price_per_hour": 2.765, "family": "m6a", "arch": "x86_64"},
+    # M7a - General Purpose (AMD)
+    "m7a.xlarge":   {"vcpu": 4,  "memory_gb": 16,  "price_per_hour": 0.193, "family": "m7a", "arch": "x86_64"},
+    "m7a.2xlarge":  {"vcpu": 8,  "memory_gb": 32,  "price_per_hour": 0.386, "family": "m7a", "arch": "x86_64"},
+    "m7a.4xlarge":  {"vcpu": 16, "memory_gb": 64,  "price_per_hour": 0.773, "family": "m7a", "arch": "x86_64"},
+    "m7a.8xlarge":  {"vcpu": 32, "memory_gb": 128, "price_per_hour": 1.546, "family": "m7a", "arch": "x86_64"},
+    "m7a.12xlarge": {"vcpu": 48, "memory_gb": 192, "price_per_hour": 2.318, "family": "m7a", "arch": "x86_64"},
+    "m7a.16xlarge": {"vcpu": 64, "memory_gb": 256, "price_per_hour": 3.091, "family": "m7a", "arch": "x86_64"},
     # R5 - Memory Optimized (Intel)
     "r5.xlarge":    {"vcpu": 4,  "memory_gb": 32,  "price_per_hour": 0.252, "family": "r5", "arch": "x86_64"},
     "r5.2xlarge":   {"vcpu": 8,  "memory_gb": 64,  "price_per_hour": 0.504, "family": "r5", "arch": "x86_64"},
@@ -77,6 +91,20 @@ INSTANCE_CATALOG = {
     "r7g.8xlarge":  {"vcpu": 32, "memory_gb": 256, "price_per_hour": 1.714, "family": "r7g", "arch": "arm64"},
     "r7g.12xlarge": {"vcpu": 48, "memory_gb": 384, "price_per_hour": 2.570, "family": "r7g", "arch": "arm64"},
     "r7g.16xlarge": {"vcpu": 64, "memory_gb": 512, "price_per_hour": 3.427, "family": "r7g", "arch": "arm64"},
+    # R6a - Memory Optimized (AMD)
+    "r6a.xlarge":   {"vcpu": 4,  "memory_gb": 32,  "price_per_hour": 0.226, "family": "r6a", "arch": "x86_64"},
+    "r6a.2xlarge":  {"vcpu": 8,  "memory_gb": 64,  "price_per_hour": 0.453, "family": "r6a", "arch": "x86_64"},
+    "r6a.4xlarge":  {"vcpu": 16, "memory_gb": 128, "price_per_hour": 0.907, "family": "r6a", "arch": "x86_64"},
+    "r6a.8xlarge":  {"vcpu": 32, "memory_gb": 256, "price_per_hour": 1.814, "family": "r6a", "arch": "x86_64"},
+    "r6a.12xlarge": {"vcpu": 48, "memory_gb": 384, "price_per_hour": 2.722, "family": "r6a", "arch": "x86_64"},
+    "r6a.16xlarge": {"vcpu": 64, "memory_gb": 512, "price_per_hour": 3.629, "family": "r6a", "arch": "x86_64"},
+    # R7a - Memory Optimized (AMD)
+    "r7a.xlarge":   {"vcpu": 4,  "memory_gb": 32,  "price_per_hour": 0.255, "family": "r7a", "arch": "x86_64"},
+    "r7a.2xlarge":  {"vcpu": 8,  "memory_gb": 64,  "price_per_hour": 0.510, "family": "r7a", "arch": "x86_64"},
+    "r7a.4xlarge":  {"vcpu": 16, "memory_gb": 128, "price_per_hour": 1.020, "family": "r7a", "arch": "x86_64"},
+    "r7a.8xlarge":  {"vcpu": 32, "memory_gb": 256, "price_per_hour": 2.041, "family": "r7a", "arch": "x86_64"},
+    "r7a.12xlarge": {"vcpu": 48, "memory_gb": 384, "price_per_hour": 3.061, "family": "r7a", "arch": "x86_64"},
+    "r7a.16xlarge": {"vcpu": 64, "memory_gb": 512, "price_per_hour": 4.082, "family": "r7a", "arch": "x86_64"},
     # C5 - Compute Optimized (Intel)
     "c5.xlarge":    {"vcpu": 4,  "memory_gb": 8,   "price_per_hour": 0.170, "family": "c5", "arch": "x86_64"},
     "c5.2xlarge":   {"vcpu": 8,  "memory_gb": 16,  "price_per_hour": 0.340, "family": "c5", "arch": "x86_64"},
@@ -111,6 +139,20 @@ INSTANCE_CATALOG = {
     "c7g.8xlarge":  {"vcpu": 32, "memory_gb": 64,  "price_per_hour": 1.156, "family": "c7g", "arch": "arm64"},
     "c7g.12xlarge": {"vcpu": 48, "memory_gb": 96,  "price_per_hour": 1.734, "family": "c7g", "arch": "arm64"},
     "c7g.16xlarge": {"vcpu": 64, "memory_gb": 128, "price_per_hour": 2.312, "family": "c7g", "arch": "arm64"},
+    # C6a - Compute Optimized (AMD)
+    "c6a.xlarge":   {"vcpu": 4,  "memory_gb": 8,   "price_per_hour": 0.153, "family": "c6a", "arch": "x86_64"},
+    "c6a.2xlarge":  {"vcpu": 8,  "memory_gb": 16,  "price_per_hour": 0.306, "family": "c6a", "arch": "x86_64"},
+    "c6a.4xlarge":  {"vcpu": 16, "memory_gb": 32,  "price_per_hour": 0.612, "family": "c6a", "arch": "x86_64"},
+    "c6a.8xlarge":  {"vcpu": 32, "memory_gb": 64,  "price_per_hour": 1.224, "family": "c6a", "arch": "x86_64"},
+    "c6a.12xlarge": {"vcpu": 48, "memory_gb": 96,  "price_per_hour": 1.836, "family": "c6a", "arch": "x86_64"},
+    "c6a.16xlarge": {"vcpu": 64, "memory_gb": 128, "price_per_hour": 2.448, "family": "c6a", "arch": "x86_64"},
+    # C7a - Compute Optimized (AMD)
+    "c7a.xlarge":   {"vcpu": 4,  "memory_gb": 8,   "price_per_hour": 0.171, "family": "c7a", "arch": "x86_64"},
+    "c7a.2xlarge":  {"vcpu": 8,  "memory_gb": 16,  "price_per_hour": 0.343, "family": "c7a", "arch": "x86_64"},
+    "c7a.4xlarge":  {"vcpu": 16, "memory_gb": 32,  "price_per_hour": 0.686, "family": "c7a", "arch": "x86_64"},
+    "c7a.8xlarge":  {"vcpu": 32, "memory_gb": 64,  "price_per_hour": 1.371, "family": "c7a", "arch": "x86_64"},
+    "c7a.12xlarge": {"vcpu": 48, "memory_gb": 96,  "price_per_hour": 2.057, "family": "c7a", "arch": "x86_64"},
+    "c7a.16xlarge": {"vcpu": 64, "memory_gb": 128, "price_per_hour": 2.742, "family": "c7a", "arch": "x86_64"},
 }
 
 # Size ordering for same-family downsizing
