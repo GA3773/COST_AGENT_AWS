@@ -36,11 +36,40 @@ def build_graph():
 
     # Create the agent node (closure over llm_with_tools)
     def agent_node(state: dict) -> dict:
-        # Inject system prompt if not already present
-        messages = state["messages"]
-        if not messages or not isinstance(messages[0], SystemMessage):
-            messages = [SystemMessage(content=SYSTEM_PROMPT)] + list(messages)
-            state = {**state, "messages": messages}
+        # Build system prompt with current optimization context
+        system_content = SYSTEM_PROMPT
+
+        # Inject current state context so LLM knows about ongoing optimization
+        context_parts = []
+        if state.get("cluster_name"):
+            context_parts.append(f"Current cluster: {state['cluster_name']}")
+        if state.get("cluster_id"):
+            context_parts.append(f"Cluster ID: {state['cluster_id']}")
+        if state.get("new_cluster_id"):
+            context_parts.append(f"New (optimized) cluster ID: {state['new_cluster_id']}")
+        if state.get("optimization_status"):
+            context_parts.append(f"Optimization status: {state['optimization_status']}")
+        if state.get("optimization_request_id"):
+            context_parts.append(f"Job ID: {state['optimization_request_id']}")
+        if state.get("core_recommendation"):
+            rec = state["core_recommendation"]
+            context_parts.append(f"CORE recommendation: {rec.get('instance_type', 'N/A')}")
+        if state.get("task_recommendation"):
+            rec = state["task_recommendation"]
+            context_parts.append(f"TASK recommendation: {rec.get('instance_type', 'N/A')}")
+
+        if context_parts:
+            context_block = "\n\n## Current Session Context\n" + "\n".join(f"- {p}" for p in context_parts)
+            system_content = SYSTEM_PROMPT + context_block
+
+        # Inject system prompt if not already present or update it
+        messages = list(state["messages"])
+        if messages and isinstance(messages[0], SystemMessage):
+            messages[0] = SystemMessage(content=system_content)
+        else:
+            messages = [SystemMessage(content=system_content)] + messages
+        state = {**state, "messages": messages}
+
         return call_agent(state, llm_with_tools)
 
     # Build graph

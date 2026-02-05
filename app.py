@@ -18,6 +18,10 @@ logger = get_logger(__name__)
 # Graph-level thread tracking: thread_id -> {status_queue, completed, awaiting_approval}
 threads = {}
 
+# Session to LangGraph thread mapping: session_id -> thread_id
+# Using the same thread_id per session preserves LangGraph state (cluster_name, etc.)
+session_threads = {}
+
 # Conversation sessions: session_id -> list of {"role": "user"|"assistant", "content": "..."}
 # This is the clean conversation history (no tool calls/responses) that persists
 # across multiple graph runs so the LLM has full context.
@@ -74,8 +78,6 @@ def chat():
 
     # Build the full message list for the LLM: prior conversation + new message.
     # These are clean user/assistant pairs only -- no tool calls, no tool responses.
-    # This gives the LLM full conversational context while keeping each graph
-    # execution isolated (fresh thread_id) to avoid tool_calls message corruption.
     llm_messages = []
     for msg in history:
         if msg["role"] == "user":
@@ -83,15 +85,24 @@ def chat():
         elif msg["role"] == "assistant":
             llm_messages.append(("assistant", msg["content"]))
 
-    # Fresh thread for each graph run (avoids dangling tool_calls in checkpoint)
-    thread_id = str(uuid.uuid4())
+    # Use same thread_id per session to preserve LangGraph state across messages
+    # This allows the agent to remember cluster_name, optimization status, etc.
+    if session_id not in session_threads:
+        session_threads[session_id] = str(uuid.uuid4())
+    thread_id = session_threads[session_id]
 
-    threads[thread_id] = {
-        "status_queue": queue.Queue(),
-        "completed": False,
-        "awaiting_approval": False,
-        "session_id": session_id,
-    }
+    # Create or reuse thread state for SSE
+    if thread_id not in threads:
+        threads[thread_id] = {
+            "status_queue": queue.Queue(),
+            "completed": False,
+            "awaiting_approval": False,
+            "session_id": session_id,
+        }
+    else:
+        # Reset for new message on same thread
+        threads[thread_id]["status_queue"] = queue.Queue()
+        threads[thread_id]["completed"] = False
 
     thread_state = threads[thread_id]
 
@@ -103,7 +114,25 @@ def chat():
             g = get_graph()
             _push_status(thread_id, "processing", "Agent is thinking...")
 
-            inputs = {"messages": llm_messages}
+            # Read previous state from checkpoint to preserve context
+            snapshot = g.get_state(config)
+            previous_state = snapshot.values if snapshot and snapshot.values else {}
+
+            # Build inputs: messages + preserved state fields
+            inputs = {
+                "messages": llm_messages,
+                # Preserve optimization context from previous runs
+                "cluster_name": previous_state.get("cluster_name"),
+                "cluster_id": previous_state.get("cluster_id"),
+                "original_config_backup": previous_state.get("original_config_backup"),
+                "new_cluster_id": previous_state.get("new_cluster_id"),
+                "optimization_status": previous_state.get("optimization_status"),
+                "optimization_request_id": previous_state.get("optimization_request_id"),
+                "core_analysis": previous_state.get("core_analysis"),
+                "task_analysis": previous_state.get("task_analysis"),
+                "core_recommendation": previous_state.get("core_recommendation"),
+                "task_recommendation": previous_state.get("task_recommendation"),
+            }
 
             for event in g.stream(inputs, config, stream_mode="updates"):
                 for node_name, node_output in event.items():
