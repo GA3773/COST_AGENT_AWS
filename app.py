@@ -9,6 +9,8 @@ from flask import Flask, Response, jsonify, render_template, request
 
 from agent.graph import build_graph
 from config import get_logger
+from services import emr_service
+from services.background_monitor import monitor
 
 app = Flask(__name__)
 logger = get_logger(__name__)
@@ -20,6 +22,11 @@ threads = {}
 # This is the clean conversation history (no tool calls/responses) that persists
 # across multiple graph runs so the LLM has full context.
 conversation_sessions = {}
+
+# Workflow step tracking: session_id -> {"cluster_name": str, "steps": {...}, "active": bool}
+# Steps: backup, modify, create, monitor, revert, clone, run, compare
+# Status: pending, in_progress, completed, error, phase2
+workflow_sessions = {}
 
 graph = None
 
@@ -103,6 +110,8 @@ def chat():
                     phase = node_output.get("current_phase", "")
                     if phase:
                         _push_status(thread_id, "phase", phase)
+                        # Update workflow step tracking
+                        _update_workflow_from_phase(session_id, phase, node_output)
 
                     new_messages = node_output.get("messages", [])
                     for msg in new_messages:
@@ -185,6 +194,8 @@ def approve():
                     phase = node_output.get("current_phase", "")
                     if phase:
                         _push_status(thread_id, "phase", phase)
+                        # Update workflow step tracking
+                        _update_workflow_from_phase(session_id, phase, node_output)
 
                     new_messages = node_output.get("messages", [])
                     for msg in new_messages:
@@ -257,6 +268,181 @@ def _push_status(thread_id: str, event_type: str, content: str):
             "type": event_type,
             "content": content,
         })
+
+
+@app.route("/api/clusters")
+def list_clusters():
+    """List transient clusters with pagination.
+
+    Query params:
+        page: Page number (default 1)
+        per_page: Items per page (default 20, max 100)
+
+    Returns:
+        JSON with clusters array, pagination info
+    """
+    try:
+        page = int(request.args.get("page", 1))
+        per_page = min(int(request.args.get("per_page", 20)), 100)
+    except ValueError:
+        return jsonify({"error": "Invalid pagination params"}), 400
+
+    clusters = emr_service.get_transient_clusters()
+
+    # Sort by end time descending (most recent first)
+    clusters.sort(key=lambda c: c.get("ended", ""), reverse=True)
+
+    total = len(clusters)
+    pages = (total + per_page - 1) // per_page if total > 0 else 1
+    start = (page - 1) * per_page
+    end = start + per_page
+
+    return jsonify({
+        "clusters": clusters[start:end],
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "pages": pages,
+    })
+
+
+@app.route("/api/optimization/status")
+def optimization_status():
+    """Get current optimization workflow status.
+
+    Query params:
+        session_id: The conversation session ID
+
+    Returns:
+        JSON with workflow step statuses for the subway graph
+    """
+    session_id = request.args.get("session_id")
+
+    if not session_id:
+        return jsonify({"error": "session_id required"}), 400
+
+    # Check background monitor status first
+    monitor_status = monitor.get_status()
+
+    # Get workflow session if exists
+    workflow = workflow_sessions.get(session_id, {})
+
+    # Default step statuses
+    steps = workflow.get("steps", {
+        "backup": "pending",
+        "modify": "pending",
+        "create": "pending",
+        "monitor": "pending",
+        "revert": "pending",
+        "clone": "phase2",
+        "run": "phase2",
+        "compare": "phase2",
+    })
+
+    # Update monitor step based on background monitor
+    if monitor_status.get("active"):
+        steps["monitor"] = "in_progress"
+        # Update previous steps as completed if monitoring
+        if steps["backup"] == "pending":
+            steps["backup"] = "completed"
+        if steps["modify"] == "pending":
+            steps["modify"] = "completed"
+        if steps["create"] == "pending":
+            steps["create"] = "completed"
+    elif monitor_status.get("status") == "reverted":
+        steps["monitor"] = "completed"
+        steps["revert"] = "completed"
+    elif monitor_status.get("status") in ("timeout", "failed"):
+        steps["monitor"] = "error"
+        steps["revert"] = "completed" if monitor_status.get("reverted") else "error"
+
+    return jsonify({
+        "active": workflow.get("active", False) or monitor_status.get("active", False),
+        "cluster_name": workflow.get("cluster_name") or monitor_status.get("cluster_name"),
+        "current_step": _get_current_step(steps),
+        "steps": steps,
+        "monitor_details": {
+            "status": monitor_status.get("status"),
+            "cluster_state": monitor_status.get("cluster_state"),
+            "elapsed_seconds": monitor_status.get("elapsed_seconds"),
+            "message": monitor_status.get("message"),
+        } if monitor_status.get("active") or monitor_status.get("status") else None,
+    })
+
+
+def _get_current_step(steps: dict) -> str:
+    """Determine the current active step from step statuses."""
+    order = ["backup", "modify", "create", "monitor", "revert", "clone", "run", "compare"]
+    for step in order:
+        status = steps.get(step)
+        if status == "in_progress":
+            return step
+        if status == "pending":
+            # Find the first pending step that's not blocked
+            return step
+    return "complete"
+
+
+def _update_workflow_from_phase(session_id: str, phase: str, node_output: dict):
+    """Map graph phase changes to workflow step updates."""
+    cluster_name = node_output.get("cluster_name")
+
+    phase_to_step = {
+        "initialized": None,
+        "backed_up": ("backup", "completed"),
+        "modified": ("modify", "completed"),
+        "cluster_creation_submitted": ("create", "completed"),
+        "monitoring": ("monitor", "in_progress"),
+        "cluster_ready": ("monitor", "completed"),
+        "reverted": ("revert", "completed"),
+        "revert_skipped": ("revert", "completed"),
+        "revert_failed": ("revert", "error"),
+    }
+
+    mapping = phase_to_step.get(phase)
+    if mapping:
+        step, status = mapping
+        update_workflow_step(session_id, step, status, cluster_name)
+
+        # Also mark previous steps as completed if needed
+        order = ["backup", "modify", "create", "monitor", "revert"]
+        step_idx = order.index(step) if step in order else -1
+        for i in range(step_idx):
+            prev_step = order[i]
+            if session_id in workflow_sessions:
+                current_status = workflow_sessions[session_id]["steps"].get(prev_step)
+                if current_status == "pending":
+                    workflow_sessions[session_id]["steps"][prev_step] = "completed"
+
+
+def update_workflow_step(session_id: str, step: str, status: str, cluster_name: str = None):
+    """Update a workflow step status."""
+    if session_id not in workflow_sessions:
+        workflow_sessions[session_id] = {
+            "cluster_name": cluster_name,
+            "active": True,
+            "steps": {
+                "backup": "pending",
+                "modify": "pending",
+                "create": "pending",
+                "monitor": "pending",
+                "revert": "pending",
+                "clone": "phase2",
+                "run": "phase2",
+                "compare": "phase2",
+            },
+        }
+
+    workflow = workflow_sessions[session_id]
+    if cluster_name:
+        workflow["cluster_name"] = cluster_name
+    workflow["steps"][step] = status
+
+    # Push step update through SSE if there's an active thread
+    for tid, tstate in threads.items():
+        if tstate.get("session_id") == session_id:
+            _push_status(tid, "workflow_step", json.dumps({"step": step, "status": status}))
+            break
 
 
 if __name__ == "__main__":

@@ -5,40 +5,134 @@
 {% block body %}
 <div class="app">
     <header class="header">
-        <h1 class="header__title">COST AGENT</h1>
-        <p class="header__subtitle">EMR Instance Optimization</p>
+        <div class="header__left">
+            <h1 class="header__title">COST AGENT</h1>
+            <p class="header__subtitle">EMR Instance Optimization</p>
+        </div>
+        <button class="btn btn--secondary" id="btnRefresh">Refresh Clusters</button>
     </header>
 
-    <main class="chat" id="chat">
-        <div class="chat__messages" id="messages">
-            <div class="message message--agent">
-                <div class="message__content">
-                    Which cluster would you like to optimize? Type <strong>list clusters</strong> to see recent transient clusters, or enter a cluster name directly.
+    <!-- Cluster Table Section -->
+    <section class="clusters" id="clustersSection">
+        <div class="clusters__header">
+            <h2 class="clusters__title">Transient Clusters</h2>
+            <div class="clusters__pagination" id="pagination">
+                <span class="pagination__info" id="paginationInfo">Loading...</span>
+                <div class="pagination__controls">
+                    <button class="btn btn--icon" id="btnPrev" disabled>&lt;</button>
+                    <button class="btn btn--icon" id="btnNext" disabled>&gt;</button>
                 </div>
             </div>
         </div>
+        <div class="clusters__table-wrapper">
+            <table class="clusters__table" id="clustersTable">
+                <thead>
+                    <tr>
+                        <th>Cluster Name</th>
+                        <th>Cluster ID</th>
+                        <th>Runtime</th>
+                        <th>Status</th>
+                        <th>End Time</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="clustersBody">
+                    <tr>
+                        <td colspan="6" class="clusters__loading">Loading clusters...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </section>
 
-        <div class="chat__approval" id="approval" style="display: none;">
-            <button class="btn btn--primary" id="btnApprove">Proceed with Optimization</button>
-            <button class="btn btn--secondary" id="btnCancel">Cancel</button>
+    <!-- Agent Panel Section (hidden by default, shown when cluster selected) -->
+    <section class="agent-panel" id="agentPanel" style="display: none;">
+        <div class="agent-panel__header">
+            <h2 class="agent-panel__title">
+                <span id="selectedClusterName">-</span>
+                <span class="agent-panel__subtitle">Optimization</span>
+            </h2>
+            <button class="btn btn--secondary btn--small" id="btnClosePanel">Close</button>
         </div>
 
-        <div class="chat__progress" id="progress" style="display: none;">
-            <div class="progress__indicator"></div>
-            <span class="progress__text" id="progressText"></span>
+        <!-- Subway Graph -->
+        <div class="subway-graph" id="subwayGraph">
+            <div class="subway-graph__track">
+                <div class="subway-node" data-step="backup">
+                    <div class="subway-node__dot"></div>
+                    <div class="subway-node__label">Backup</div>
+                </div>
+                <div class="subway-connector"></div>
+                <div class="subway-node" data-step="modify">
+                    <div class="subway-node__dot"></div>
+                    <div class="subway-node__label">Modify</div>
+                </div>
+                <div class="subway-connector"></div>
+                <div class="subway-node" data-step="create">
+                    <div class="subway-node__dot"></div>
+                    <div class="subway-node__label">Create</div>
+                </div>
+                <div class="subway-connector"></div>
+                <div class="subway-node" data-step="monitor">
+                    <div class="subway-node__dot"></div>
+                    <div class="subway-node__label">Monitor</div>
+                </div>
+                <div class="subway-connector"></div>
+                <div class="subway-node" data-step="revert">
+                    <div class="subway-node__dot"></div>
+                    <div class="subway-node__label">Revert</div>
+                </div>
+                <div class="subway-connector subway-connector--phase2"></div>
+                <div class="subway-node subway-node--phase2" data-step="clone">
+                    <div class="subway-node__dot"></div>
+                    <div class="subway-node__label">Clone</div>
+                </div>
+                <div class="subway-connector subway-connector--phase2"></div>
+                <div class="subway-node subway-node--phase2" data-step="run">
+                    <div class="subway-node__dot"></div>
+                    <div class="subway-node__label">Run</div>
+                </div>
+                <div class="subway-connector subway-connector--phase2"></div>
+                <div class="subway-node subway-node--phase2" data-step="compare">
+                    <div class="subway-node__dot"></div>
+                    <div class="subway-node__label">Compare</div>
+                </div>
+            </div>
+            <div class="subway-graph__phase2-label">Phase 2</div>
         </div>
-    </main>
 
-    <footer class="input-bar">
-        <input
-            type="text"
-            class="input-bar__field"
-            id="userInput"
-            placeholder="Type a message..."
-            autocomplete="off"
-        >
-        <button class="btn btn--send" id="btnSend">Send</button>
-    </footer>
+        <!-- Chat Area -->
+        <div class="chat" id="chat">
+            <div class="chat__messages" id="messages">
+                <div class="message message--agent">
+                    <div class="message__content">
+                        Select a cluster from the table above, or type a cluster name to analyze.
+                    </div>
+                </div>
+            </div>
+
+            <div class="chat__approval" id="approval" style="display: none;">
+                <button class="btn btn--primary" id="btnApprove">Proceed with Optimization</button>
+                <button class="btn btn--secondary" id="btnCancel">Cancel</button>
+            </div>
+
+            <div class="chat__progress" id="progress" style="display: none;">
+                <div class="progress__indicator"></div>
+                <span class="progress__text" id="progressText"></span>
+            </div>
+        </div>
+
+        <footer class="input-bar">
+            <input
+                type="text"
+                class="input-bar__field"
+                id="userInput"
+                placeholder="Type a message or ask to optimize..."
+                autocomplete="off"
+            >
+            <button class="btn btn--send" id="btnSend">Send</button>
+        </footer>
+    </section>
 </div>
 {% endblock %}
 
