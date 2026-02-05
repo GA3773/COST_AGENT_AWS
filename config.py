@@ -64,9 +64,13 @@ GRAVITON_FAMILIES = {
     "a1",
 }
 
-# --- Cluster Monitoring ---
+# --- Cluster Monitoring (blocking, legacy) ---
 CLUSTER_POLL_INTERVAL = 30  # seconds between status checks
 CLUSTER_POLL_MAX_WAIT = 1800  # 30 minutes max wait
+
+# --- Background Cluster Monitoring ---
+BACKGROUND_POLL_INTERVAL = 120  # 2 minutes between status checks
+BACKGROUND_POLL_TIMEOUT = 1200  # 20 minutes max wait before auto-revert
 
 
 # --- Audit Logging ---

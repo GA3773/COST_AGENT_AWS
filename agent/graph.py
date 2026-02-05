@@ -14,7 +14,7 @@ from agent.nodes import (
     report_node,
     revert_node,
     route_agent,
-    wait_node,
+    # wait_node removed - background monitor handles waiting and revert
 )
 from agent.prompts import SYSTEM_PROMPT
 from agent.state import AgentState
@@ -53,8 +53,8 @@ def build_graph():
     graph.add_node("backup", backup_node)
     graph.add_node("modify", modify_node)
     graph.add_node("create", create_node)
-    graph.add_node("wait", wait_node)
-    graph.add_node("revert", revert_node)
+    # wait_node removed - background monitor handles waiting
+    graph.add_node("revert", revert_node)  # Only used for error paths
     graph.add_node("report", report_node)
 
     # Set entry point
@@ -73,10 +73,13 @@ def build_graph():
     # Tools loop back to agent
     graph.add_edge("tools", "agent")
 
-    # Execution pipeline: backup -> modify -> create -> wait -> revert -> report -> END
+    # Execution pipeline (async flow):
+    # backup -> modify -> create -> report -> END
+    # The create_node starts a background monitor that handles waiting and revert.
+    # Revert node is only used for error paths (modify fails before Lambda is called).
     graph.add_edge("backup", "modify")
 
-    # Modify can error -> jump to revert
+    # Modify can error -> jump to revert, otherwise create
     def modify_route(state: dict) -> str:
         return "revert" if state.get("error") else "create"
     graph.add_conditional_edges("modify", modify_route, {
@@ -84,21 +87,16 @@ def build_graph():
         "revert": "revert",
     })
 
-    # Create can error -> jump to revert
+    # Create: on success -> report (background monitor handles revert)
+    #         on error -> revert (need to restore config immediately)
     def create_route(state: dict) -> str:
-        return "revert" if state.get("error") else "wait"
+        return "revert" if state.get("error") else "report"
     graph.add_conditional_edges("create", create_route, {
-        "wait": "wait",
+        "report": "report",
         "revert": "revert",
     })
 
-    # Wait can error -> jump to revert
-    def wait_route(state: dict) -> str:
-        return "revert"  # Always revert after wait, success or failure
-    graph.add_conditional_edges("wait", wait_route, {
-        "revert": "revert",
-    })
-
+    # Revert (error path only) -> report
     graph.add_edge("revert", "report")
     graph.add_edge("report", END)
 

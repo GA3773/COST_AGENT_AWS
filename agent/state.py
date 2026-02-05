@@ -40,6 +40,11 @@ class AgentState(TypedDict):
     new_cluster_status: Optional[str]
     config_reverted: Optional[bool]
 
+    # Background monitoring
+    optimization_request_id: Optional[str]  # Lambda request ID
+    optimization_task_id: Optional[str]     # Background monitor task ID
+    optimization_status: Optional[str]      # pending/monitoring/reverted/failed
+
     # Output
     final_report: Optional[str]
 

@@ -145,38 +145,94 @@ def modify_node(state: dict) -> dict:
 
 
 def create_node(state: dict) -> dict:
-    """Invoke Lambda to create the test cluster."""
+    """Invoke Lambda and start background monitoring for param store revert.
+
+    The Lambda submits a request to Step Functions which creates the cluster.
+    This can take 10-12 minutes. We start a background monitor that polls EMR
+    for the cluster by name and auto-reverts the param store once the cluster
+    reaches STARTING state.
+    """
     if state.get("error"):
         logger.info("[CREATE_NODE] Skipping due to prior error")
         return {}
 
     cluster_name = state.get("cluster_name")
+    original_config = state.get("original_config_backup")
+
+    if not original_config:
+        logger.error("[CREATE_NODE] No original config backup available")
+        return {
+            "error": "No original config backup - cannot safely proceed",
+            "messages": [AIMessage(content="Error: No config backup available for revert.")],
+        }
+
     logger.info(f"[CREATE_NODE] Invoking Lambda for cluster={cluster_name}")
 
     try:
         from tools.lambda_operations import invoke_cluster_lambda
+        from services.background_monitor import monitor
 
+        # Check if another optimization is running
+        if monitor.is_busy:
+            status = monitor.get_status()
+            logger.warning(f"[CREATE_NODE] Another optimization in progress: {status}")
+            return {
+                "error": "Another optimization is in progress",
+                "messages": [AIMessage(
+                    content=f"Cannot start new optimization. {status['message']}"
+                )],
+            }
+
+        # Invoke Lambda
         result = invoke_cluster_lambda.invoke({"cluster_name": cluster_name})
         logger.info(f"[CREATE_NODE] Lambda response: {result}")
 
-        # Parse cluster ID from result
-        new_cluster_id = None
-        if "Cluster ID:" in result:
-            new_cluster_id = result.split("Cluster ID:")[-1].strip()
+        # Parse request ID from result (Lambda returns request_id, not cluster_id)
+        request_id = "unknown"
+        if "request_id" in result.lower():
+            # Try to parse request_id from JSON or string
+            import json
+            import re
+            # Try JSON parse
+            try:
+                if "{" in result:
+                    json_part = result[result.index("{"):result.rindex("}")+1]
+                    parsed = json.loads(json_part)
+                    request_id = parsed.get("request_id", "unknown")
+            except (json.JSONDecodeError, ValueError):
+                pass
+            # Fallback: regex
+            if request_id == "unknown":
+                match = re.search(r'request_id["\s:]+([a-zA-Z0-9-]+)', result, re.IGNORECASE)
+                if match:
+                    request_id = match.group(1)
 
-        logger.info(f"[CREATE_NODE] Parsed cluster_id={new_cluster_id}")
+        logger.info(f"[CREATE_NODE] Parsed request_id={request_id}")
 
-        if not new_cluster_id or new_cluster_id == "unknown":
-            logger.error(f"[CREATE_NODE] Failed to parse cluster ID from Lambda response")
-            return {
-                "error": f"Lambda did not return a valid cluster ID: {result}",
-                "messages": [AIMessage(content=f"Failed to get cluster ID from Lambda: {result}")],
-            }
+        # Start background monitor
+        task_id = state.get("correlation_id", str(uuid.uuid4()))
+        monitor_task = monitor.start_monitoring(
+            task_id=task_id,
+            cluster_name=cluster_name,
+            request_id=request_id,
+            original_config=original_config,
+        )
+
+        logger.info(f"[CREATE_NODE] Background monitor started, task_id={task_id}")
 
         return {
-            "new_cluster_id": new_cluster_id,
-            "current_phase": "cluster_created",
-            "messages": [AIMessage(content=f"Cluster creation triggered. {result}")],
+            "optimization_request_id": request_id,
+            "optimization_task_id": task_id,
+            "optimization_status": "monitoring",
+            "current_phase": "cluster_creation_submitted",
+            "messages": [AIMessage(content=(
+                f"Cluster creation submitted for {cluster_name}.\n\n"
+                f"**Request ID:** {request_id}\n\n"
+                f"The cluster will take 10-12 minutes to start. I'm monitoring in the background "
+                f"and will automatically revert the Parameter Store config once the cluster "
+                f"reaches STARTING state.\n\n"
+                f"You can continue chatting or ask me to check the optimization status anytime."
+            ))],
         }
     except Exception as e:
         logger.error(f"[CREATE_NODE] Exception: {e}")
@@ -318,36 +374,57 @@ def revert_node(state: dict) -> dict:
 
 
 def report_node(state: dict) -> dict:
-    """Generate final optimization report."""
+    """Generate optimization status report.
+
+    For async flow, this reports that the optimization was submitted and is being
+    monitored in the background. The actual completion (revert) happens async.
+    """
     cluster_name = state.get("cluster_name", "unknown")
     error = state.get("error")
-    reverted = state.get("config_reverted", False)
-    new_cluster_id = state.get("new_cluster_id", "N/A")
-    new_status = state.get("new_cluster_status", "N/A")
+    request_id = state.get("optimization_request_id", "N/A")
+    task_id = state.get("optimization_task_id", "N/A")
+    opt_status = state.get("optimization_status", "unknown")
 
-    lines = [
-        "Optimization Summary",
-        "=" * 40,
-        f"Cluster: {cluster_name}",
-        f"Test cluster: {new_cluster_id} ({new_status})",
-        f"Config reverted: {'Yes' if reverted else 'No'}",
-    ]
-
+    # For async flow, we report submission status, not completion
     if error:
-        lines.append(f"Error: {error}")
+        lines = [
+            "Optimization Failed",
+            "=" * 40,
+            f"Cluster: {cluster_name}",
+            f"Error: {error}",
+            "",
+            "The Parameter Store config may need manual revert if it was modified.",
+        ]
     else:
-        lines.append("Status: Completed successfully")
+        core_rec = state.get("core_recommendation")
+        task_rec = state.get("task_recommendation")
 
-    core_rec = state.get("core_recommendation")
-    task_rec = state.get("task_recommendation")
-    if core_rec:
-        lines.append(f"CORE: {core_rec.get('recommended_type', 'unchanged')}")
-    if task_rec:
-        lines.append(f"TASK: {task_rec.get('recommended_type', 'unchanged')}")
+        lines = [
+            "Optimization Submitted",
+            "=" * 40,
+            f"Cluster: {cluster_name}",
+            f"Request ID: {request_id}",
+            f"Monitor Task: {task_id}",
+            "",
+            "Changes applied to Parameter Store:",
+        ]
+
+        if core_rec and core_rec.get("recommended_type"):
+            lines.append(f"  CORE: {core_rec.get('instance_type', '?')} -> {core_rec['recommended_type']}")
+        if task_rec and task_rec.get("recommended_type"):
+            lines.append(f"  TASK: {task_rec.get('instance_type', '?')} -> {task_rec['recommended_type']}")
+
+        lines.extend([
+            "",
+            "Background monitor is polling EMR every 2 minutes.",
+            "Config will auto-revert once cluster reaches STARTING state.",
+            "",
+            "Ask me 'what is the optimization status?' to check progress.",
+        ])
 
     report = "\n".join(lines)
     return {
         "final_report": report,
-        "current_phase": "complete",
+        "current_phase": "monitoring",
         "messages": [AIMessage(content=report)],
     }
