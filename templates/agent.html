@@ -58,45 +58,61 @@
             <!-- Subway Graph -->
             <div class="subway-graph" id="subwayGraph">
                 <div class="subway-graph__track">
-                    <div class="subway-node" data-step="backup">
+                    <div class="subway-node" data-step="analyze">
                         <div class="subway-node__dot"></div>
-                        <div class="subway-node__label">Backup</div>
+                        <div class="subway-node__label">Analyze</div>
+                    </div>
+                    <div class="subway-connector"></div>
+                    <div class="subway-node subway-node--clickable" data-step="recommend" id="recommendNode">
+                        <div class="subway-node__dot"></div>
+                        <div class="subway-node__label">Recommend</div>
+                    </div>
+                    <div class="subway-connector"></div>
+                    <div class="subway-node" data-step="approval">
+                        <div class="subway-node__dot"></div>
+                        <div class="subway-node__label" id="approvalLabel">Approval</div>
                     </div>
                     <div class="subway-connector"></div>
                     <div class="subway-node" data-step="modify">
                         <div class="subway-node__dot"></div>
-                        <div class="subway-node__label">Modify</div>
+                        <div class="subway-node__label">Modify Config</div>
                     </div>
                     <div class="subway-connector"></div>
                     <div class="subway-node" data-step="create">
                         <div class="subway-node__dot"></div>
-                        <div class="subway-node__label">Create</div>
+                        <div class="subway-node__label">Create Cluster</div>
                     </div>
                     <div class="subway-connector"></div>
                     <div class="subway-node" data-step="monitor">
                         <div class="subway-node__dot"></div>
                         <div class="subway-node__label">Monitor</div>
                     </div>
-                    <div class="subway-connector"></div>
-                    <div class="subway-node" data-step="revert">
-                        <div class="subway-node__dot"></div>
-                        <div class="subway-node__label">Revert</div>
-                    </div>
                     <div class="subway-connector subway-connector--phase2"></div>
                     <div class="subway-node subway-node--phase2" data-step="clone">
                         <div class="subway-node__dot"></div>
-                        <div class="subway-node__label">Clone</div>
-                    </div>
-                    <div class="subway-connector subway-connector--phase2"></div>
-                    <div class="subway-node subway-node--phase2" data-step="run">
-                        <div class="subway-node__dot"></div>
-                        <div class="subway-node__label">Run</div>
+                        <div class="subway-node__label">Clone Steps</div>
                     </div>
                     <div class="subway-connector subway-connector--phase2"></div>
                     <div class="subway-node subway-node--phase2" data-step="compare">
                         <div class="subway-node__dot"></div>
                         <div class="subway-node__label">Compare</div>
                     </div>
+                    <div class="subway-connector subway-connector--phase2"></div>
+                    <div class="subway-node subway-node--phase2" data-step="finalize">
+                        <div class="subway-node__dot"></div>
+                        <div class="subway-node__label">Finalize</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Recommendation Popup -->
+            <div class="recommendation-popup" id="recommendPopup" style="display: none;">
+                <div class="recommendation-popup__header">
+                    <span>Recommendation Summary</span>
+                    <button class="btn btn--icon btn--small" id="closeRecommendPopup">&times;</button>
+                </div>
+                <div class="recommendation-popup__content" id="recommendContent">
+                    No recommendation yet.
                 </div>
             </div>
 

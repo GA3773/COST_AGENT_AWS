@@ -15,6 +15,8 @@
     var selectedCluster = null;
     var statusPollInterval = null;
     var clusters = [];
+    var lastRecommendation = null;
+    var workflowSteps = {};
 
     // DOM Elements - Sidebar
     var btnRefresh = document.getElementById("btnRefresh");
@@ -30,6 +32,13 @@
     var selectedClusterName = document.getElementById("selectedClusterName");
     var btnClosePanel = document.getElementById("btnClosePanel");
     var subwayGraph = document.getElementById("subwayGraph");
+
+    // DOM Elements - Recommendation Popup
+    var recommendNode = document.getElementById("recommendNode");
+    var recommendPopup = document.getElementById("recommendPopup");
+    var recommendContent = document.getElementById("recommendContent");
+    var closeRecommendPopup = document.getElementById("closeRecommendPopup");
+    var approvalLabel = document.getElementById("approvalLabel");
 
     // DOM Elements - Chat
     var messagesEl = document.getElementById("messages");
@@ -84,6 +93,16 @@
         });
         btnCancel.addEventListener("click", function () {
             approveOptimization(false);
+        });
+
+        // Recommendation popup
+        recommendNode.addEventListener("click", function () {
+            if (lastRecommendation) {
+                recommendPopup.style.display = "block";
+            }
+        });
+        closeRecommendPopup.addEventListener("click", function () {
+            recommendPopup.style.display = "none";
         });
     }
 
@@ -168,11 +187,25 @@
         agentView.style.display = "flex";
         resetSubwayGraph();
         clearMessages();
+        lastRecommendation = null;
+        recommendPopup.style.display = "none";
+        approvalLabel.textContent = "Approval";
         appendMessage("agent", "Ready to analyze **" + clusterName + "**.\n\nType `analyze` to see utilization metrics and recommendations, or ask any question about this cluster.");
         inputEl.focus();
 
         // Start a new session for this cluster
         sessionId = null;
+        workflowSteps = {
+            analyze: "pending",
+            recommend: "pending",
+            approval: "pending",
+            modify: "pending",
+            create: "pending",
+            monitor: "pending",
+            clone: "phase2",
+            compare: "phase2",
+            finalize: "phase2"
+        };
         startStatusPolling();
     }
 
@@ -182,6 +215,7 @@
         selectedCluster = null;
         stopStatusPolling();
         closeSSE();
+        recommendPopup.style.display = "none";
 
         // Clear selection in list
         var items = clusterList.querySelectorAll(".cluster-item");
@@ -199,30 +233,37 @@
     function resetSubwayGraph() {
         var nodes = subwayGraph.querySelectorAll(".subway-node");
         nodes.forEach(function (node) {
-            node.classList.remove("subway-node--completed", "subway-node--in_progress", "subway-node--error");
+            node.classList.remove("subway-node--completed", "subway-node--in_progress", "subway-node--error", "subway-node--approved", "subway-node--denied");
         });
         var connectors = subwayGraph.querySelectorAll(".subway-connector");
         connectors.forEach(function (conn) {
             conn.classList.remove("subway-connector--completed");
         });
+        approvalLabel.textContent = "Approval";
     }
 
     function updateSubwayGraph(steps) {
         if (!steps) return;
+        workflowSteps = Object.assign({}, workflowSteps, steps);
 
-        var stepOrder = ["backup", "modify", "create", "monitor", "revert", "clone", "run", "compare"];
+        var stepOrder = ["analyze", "recommend", "approval", "modify", "create", "monitor", "clone", "compare", "finalize"];
         var lastCompletedIndex = -1;
 
         stepOrder.forEach(function (step, index) {
-            var status = steps[step];
+            var status = workflowSteps[step];
             var node = subwayGraph.querySelector('[data-step="' + step + '"]');
             if (!node) return;
 
-            node.classList.remove("subway-node--completed", "subway-node--in_progress", "subway-node--error");
+            node.classList.remove("subway-node--completed", "subway-node--in_progress", "subway-node--error", "subway-node--approved", "subway-node--denied");
 
-            if (status === "completed") {
+            if (status === "completed" || status === "approved") {
                 node.classList.add("subway-node--completed");
+                if (status === "approved" && step === "approval") {
+                    node.classList.add("subway-node--approved");
+                }
                 lastCompletedIndex = index;
+            } else if (status === "denied") {
+                node.classList.add("subway-node--denied");
             } else if (status === "in_progress") {
                 node.classList.add("subway-node--in_progress");
             } else if (status === "error") {
@@ -238,6 +279,71 @@
                 conn.classList.add("subway-connector--completed");
             }
         });
+    }
+
+    function updateStepFromMessage(content) {
+        // Detect workflow steps from message content
+        var lowerContent = content.toLowerCase();
+
+        // Analyze step
+        if (lowerContent.includes("analyzing") || lowerContent.includes("fetching metrics") || lowerContent.includes("analysis for cluster")) {
+            updateSubwayGraph({ analyze: "in_progress" });
+        }
+
+        // Recommendation step
+        if (lowerContent.includes("recommendation") || lowerContent.includes("options") || lowerContent.includes("best fit")) {
+            updateSubwayGraph({ analyze: "completed", recommend: "completed" });
+            // Store recommendation for popup
+            lastRecommendation = content;
+            recommendContent.innerHTML = renderMarkdown(extractRecommendationSummary(content));
+        }
+
+        // Approval waiting
+        if (lowerContent.includes("please confirm") || lowerContent.includes("would you like to proceed") || lowerContent.includes("let me know")) {
+            updateSubwayGraph({ analyze: "completed", recommend: "completed", approval: "in_progress" });
+        }
+
+        // Modify step
+        if (lowerContent.includes("backup") && lowerContent.includes("configuration")) {
+            updateSubwayGraph({ approval: "approved", modify: "in_progress" });
+            approvalLabel.textContent = "Approved";
+        }
+        if (lowerContent.includes("modified parameter store") || lowerContent.includes("modification") && lowerContent.includes("completed")) {
+            updateSubwayGraph({ modify: "completed" });
+        }
+
+        // Create step
+        if (lowerContent.includes("invoke") && lowerContent.includes("lambda") || lowerContent.includes("creating") && lowerContent.includes("cluster")) {
+            updateSubwayGraph({ modify: "completed", create: "in_progress" });
+        }
+        if (lowerContent.includes("lambda") && (lowerContent.includes("success") || lowerContent.includes("invoked"))) {
+            updateSubwayGraph({ create: "completed", monitor: "in_progress" });
+        }
+
+        // Monitor step
+        if (lowerContent.includes("monitoring") || lowerContent.includes("background") || lowerContent.includes("10-12 minutes")) {
+            updateSubwayGraph({ create: "completed", monitor: "in_progress" });
+        }
+    }
+
+    function extractRecommendationSummary(content) {
+        // Extract just the recommendation part
+        var lines = content.split('\n');
+        var summary = [];
+        var inRecommendation = false;
+
+        for (var i = 0; i < lines.length; i++) {
+            var line = lines[i];
+            if (line.toLowerCase().includes('recommendation') || line.toLowerCase().includes('best fit')) {
+                inRecommendation = true;
+            }
+            if (inRecommendation) {
+                summary.push(line);
+                if (summary.length > 10) break;
+            }
+        }
+
+        return summary.length > 0 ? summary.join('\n') : 'See chat for full recommendation.';
     }
 
     // ========== Status Polling ==========
@@ -260,11 +366,12 @@
         fetch("/api/optimization/status?session_id=" + sessionId)
             .then(function (res) { return res.json(); })
             .then(function (data) {
-                if (data.steps) {
-                    updateSubwayGraph(data.steps);
-                }
                 if (data.monitor_details && data.active) {
                     showProgress(data.monitor_details.message || "Monitoring cluster...");
+                    updateSubwayGraph({ monitor: "in_progress" });
+                }
+                if (data.monitor_details && data.monitor_details.status === "reverted") {
+                    updateSubwayGraph({ monitor: "completed" });
                 }
             })
             .catch(function (err) {
@@ -282,6 +389,7 @@
         if (selectedCluster) {
             if (text.toLowerCase() === "analyze") {
                 text = "Analyze cluster " + selectedCluster;
+                updateSubwayGraph({ analyze: "in_progress" });
             } else if (text.toLowerCase() === "optimize") {
                 text = "Optimize cluster " + selectedCluster;
             }
@@ -323,19 +431,15 @@
 
     function approveOptimization(approved) {
         approvalEl.style.display = "none";
-        showProgress(approved ? "Executing optimization..." : "Cancelling...");
 
         if (approved) {
-            updateSubwayGraph({
-                backup: "in_progress",
-                modify: "pending",
-                create: "pending",
-                monitor: "pending",
-                revert: "pending",
-                clone: "phase2",
-                run: "phase2",
-                compare: "phase2"
-            });
+            showProgress("Executing optimization...");
+            updateSubwayGraph({ approval: "approved", modify: "in_progress" });
+            approvalLabel.textContent = "Approved";
+        } else {
+            showProgress("Cancelling...");
+            updateSubwayGraph({ approval: "denied" });
+            approvalLabel.textContent = "Denied";
         }
 
         fetch("/api/agent/approve", {
@@ -349,7 +453,6 @@
                     appendMessage("agent", "Optimization cancelled.");
                     hideProgress();
                     setInputEnabled(true);
-                    resetSubwayGraph();
                 } else {
                     connectSSE(threadId);
                 }
@@ -377,6 +480,7 @@
             switch (data.type) {
                 case "message":
                     appendMessage("agent", data.content);
+                    updateStepFromMessage(data.content);
                     showProgress("Agent is working...");
                     break;
                 case "processing":
@@ -388,12 +492,15 @@
                 case "workflow_step":
                     try {
                         var stepData = JSON.parse(data.content);
-                        updateSingleStep(stepData.step, stepData.status);
+                        var stepUpdate = {};
+                        stepUpdate[stepData.step] = stepData.status;
+                        updateSubwayGraph(stepUpdate);
                     } catch (e) {}
                     break;
                 case "approval_required":
                     hideProgress();
                     showApprovalButtons();
+                    updateSubwayGraph({ analyze: "completed", recommend: "completed", approval: "in_progress" });
                     break;
                 case "complete":
                     hideProgress();
@@ -431,20 +538,6 @@
         }
     }
 
-    function updateSingleStep(step, status) {
-        var node = subwayGraph.querySelector('[data-step="' + step + '"]');
-        if (!node) return;
-
-        node.classList.remove("subway-node--completed", "subway-node--in_progress", "subway-node--error");
-        if (status === "completed") {
-            node.classList.add("subway-node--completed");
-        } else if (status === "in_progress") {
-            node.classList.add("subway-node--in_progress");
-        } else if (status === "error") {
-            node.classList.add("subway-node--error");
-        }
-    }
-
     function updateProgressFromPhase(phase) {
         var labels = {
             initialized: "Initializing...",
@@ -461,24 +554,19 @@
         };
         progressText.textContent = labels[phase] || phase;
 
+        // Map phases to new step names
         var phaseToStep = {
-            backed_up: { backup: "completed" },
-            modified: { backup: "completed", modify: "completed" },
-            cluster_creation_submitted: { backup: "completed", modify: "completed", create: "completed", monitor: "in_progress" },
-            monitoring: { backup: "completed", modify: "completed", create: "completed", monitor: "in_progress" },
-            cluster_ready: { backup: "completed", modify: "completed", create: "completed", monitor: "completed" },
-            reverted: { backup: "completed", modify: "completed", create: "completed", monitor: "completed", revert: "completed" },
+            backed_up: { approval: "approved", modify: "completed" },
+            modified: { modify: "completed", create: "in_progress" },
+            cluster_creation_submitted: { create: "completed", monitor: "in_progress" },
+            monitoring: { create: "completed", monitor: "in_progress" },
+            cluster_ready: { monitor: "completed" },
+            reverted: { monitor: "completed" },
         };
 
         var stepUpdate = phaseToStep[phase];
         if (stepUpdate) {
-            var currentSteps = {
-                backup: "pending", modify: "pending", create: "pending",
-                monitor: "pending", revert: "pending",
-                clone: "phase2", run: "phase2", compare: "phase2"
-            };
-            Object.assign(currentSteps, stepUpdate);
-            updateSubwayGraph(currentSteps);
+            updateSubwayGraph(stepUpdate);
         }
     }
 

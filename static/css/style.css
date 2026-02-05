@@ -367,6 +367,85 @@ html, body {
     50% { box-shadow: 0 0 0 6px rgba(79, 140, 255, 0.1); }
 }
 
+/* Clickable Node (Recommend) */
+.subway-node--clickable {
+    cursor: pointer;
+}
+
+.subway-node--clickable:hover .subway-node__dot {
+    transform: scale(1.2);
+}
+
+.subway-node--clickable .subway-node__label {
+    text-decoration: underline;
+    text-decoration-style: dotted;
+    text-underline-offset: 3px;
+}
+
+/* Approval States */
+.subway-node--approved .subway-node__dot {
+    background: var(--color-success);
+    border-color: var(--color-success);
+}
+
+.subway-node--approved .subway-node__label {
+    color: var(--color-success);
+}
+
+.subway-node--denied .subway-node__dot {
+    background: var(--color-danger);
+    border-color: var(--color-danger);
+}
+
+.subway-node--denied .subway-node__label {
+    color: var(--color-danger);
+}
+
+/* Recommendation Popup */
+.recommendation-popup {
+    position: absolute;
+    top: 80px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 90%;
+    max-width: 500px;
+    background: var(--color-surface-2);
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    z-index: 100;
+}
+
+.recommendation-popup__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--color-border);
+    font-weight: 600;
+    font-size: 13px;
+}
+
+.recommendation-popup__content {
+    padding: 16px;
+    font-size: 13px;
+    line-height: 1.6;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.recommendation-popup__content strong {
+    color: var(--color-accent);
+}
+
+.recommendation-popup__content code {
+    background: var(--color-bg);
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+}
+
 /* ========== Chat ========== */
 .chat {
     flex: 1;
