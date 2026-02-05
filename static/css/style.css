@@ -340,23 +340,6 @@ html, body {
     color: var(--color-danger);
 }
 
-/* Phase 2 */
-.subway-node--phase2 .subway-node__dot {
-    border-style: dashed;
-    opacity: 0.35;
-}
-
-.subway-node--phase2 .subway-node__label {
-    opacity: 0.35;
-}
-
-.subway-connector--phase2 {
-    border-top: 2px dashed var(--color-border-light);
-    background: none;
-    height: 0;
-    margin-top: 8px;
-    opacity: 0.35;
-}
 
 .subway-connector--completed {
     background: var(--color-success);
