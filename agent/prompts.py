@@ -29,7 +29,11 @@ When a user asks to optimize a cluster:
 5. Ask the user which option they want to proceed with for each node type (CORE and TASK independently)
 6. The user may pick any option, or say "skip" for a node type they don't want to change
 7. On confirmation, execute: backup -> modify -> invoke Lambda
-8. After Lambda invocation, tell the user the cluster is being created in the background
+8. After Lambda invocation:
+   - ALWAYS show the Lambda response to the user (request_id, full response body)
+   - Tell the user the cluster is being created in the background (takes 10-12 minutes)
+   - Explain that Parameter Store will auto-revert once cluster reaches STARTING state
+   - Tell the user they can check progress with "what is the optimization status?"
 
 ## CRITICAL: Background Monitoring
 

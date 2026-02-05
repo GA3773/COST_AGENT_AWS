@@ -64,22 +64,39 @@ def _invoke_lambda(payload: dict) -> str:
     response_payload = json.loads(response["Payload"].read().decode("utf-8"))
     status_code = response.get("StatusCode", 0)
 
+    logger.info(f"[LAMBDA] Response status_code={status_code}, payload={response_payload}")
+
     if status_code == 200:
         body = response_payload.get("body", "{}")
         if isinstance(body, str):
-            body = json.loads(body)
-        cluster_id = body.get("cluster_id", "unknown")
+            try:
+                body = json.loads(body)
+            except json.JSONDecodeError:
+                body = {"raw": body}
+
+        # Lambda returns request_id (Step Functions execution), not cluster_id
+        request_id = body.get("request_id", body.get("cluster_id", "unknown"))
 
         audit.info(
             "Lambda invocation successful",
             extra={"audit_data": {
                 "event": "lambda_invoke_success",
                 "lambda_function": LAMBDA_FUNCTION_NAME,
-                "cluster_id": cluster_id,
+                "request_id": request_id,
                 "status_code": status_code,
+                "body": body,
             }},
         )
-        return f"Cluster creation triggered. Cluster ID: {cluster_id}"
+
+        # Return detailed output for user visibility
+        output_lines = [
+            "Lambda invocation successful.",
+            f"Request ID: {request_id}",
+            "",
+            "Full response:",
+            json.dumps(body, indent=2),
+        ]
+        return "\n".join(output_lines)
     else:
         error_msg = f"Lambda returned status {status_code}: {response_payload}"
         audit.error(
