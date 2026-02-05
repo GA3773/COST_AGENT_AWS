@@ -285,44 +285,66 @@
         // Detect workflow steps from message content
         var lowerContent = content.toLowerCase();
 
-        // Analyze step
+        // Analyze step - agent is fetching/analyzing
         if (lowerContent.includes("analyzing") || lowerContent.includes("fetching metrics") || lowerContent.includes("analysis for cluster")) {
             updateSubwayGraph({ analyze: "in_progress" });
         }
 
-        // Recommendation step
-        if (lowerContent.includes("recommendation") || lowerContent.includes("options") || lowerContent.includes("best fit")) {
+        // Recommendation step - agent presents options
+        if (lowerContent.includes("recommendation") || lowerContent.includes("options:") || lowerContent.includes("best fit")) {
             updateSubwayGraph({ analyze: "completed", recommend: "completed" });
             // Store recommendation for popup
             lastRecommendation = content;
             recommendContent.innerHTML = renderMarkdown(extractRecommendationSummary(content));
         }
 
-        // Approval waiting
-        if (lowerContent.includes("please confirm") || lowerContent.includes("would you like to proceed") || lowerContent.includes("let me know")) {
+        // Approval waiting - agent asks user to confirm/choose
+        if (lowerContent.includes("please confirm") || lowerContent.includes("would you like to proceed") ||
+            (lowerContent.includes("let me know") && lowerContent.includes("option"))) {
             updateSubwayGraph({ analyze: "completed", recommend: "completed", approval: "in_progress" });
         }
 
-        // Modify step
-        if (lowerContent.includes("backup") && lowerContent.includes("configuration")) {
-            updateSubwayGraph({ approval: "approved", modify: "in_progress" });
+        // Approval granted - agent confirms it will proceed OR user approved
+        // Detect: "have been updated", "updating the", "proceeding with", "backed up"
+        if (lowerContent.includes("have been updated") ||
+            lowerContent.includes("updating the") ||
+            lowerContent.includes("proceeding with") ||
+            (lowerContent.includes("backup") && lowerContent.includes("config"))) {
+            updateSubwayGraph({ approval: "approved" });
             approvalLabel.textContent = "Approved";
         }
-        if (lowerContent.includes("modified parameter store") || lowerContent.includes("modification") && lowerContent.includes("completed")) {
-            updateSubwayGraph({ modify: "completed" });
+
+        // Modify step - Parameter Store updated
+        // Detect: "updated to ... in the parameter store", "modified parameter store", "parameter store for"
+        if ((lowerContent.includes("parameter store") && (lowerContent.includes("updated") || lowerContent.includes("modified"))) ||
+            (lowerContent.includes("have been updated") && lowerContent.includes("parameter store"))) {
+            updateSubwayGraph({ approval: "approved", modify: "completed" });
+            approvalLabel.textContent = "Approved";
         }
 
-        // Create step
-        if (lowerContent.includes("invoke") && lowerContent.includes("lambda") || lowerContent.includes("creating") && lowerContent.includes("cluster")) {
+        // Create step - Lambda invocation
+        if ((lowerContent.includes("invoke") && lowerContent.includes("lambda")) ||
+            (lowerContent.includes("creating") && lowerContent.includes("cluster")) ||
+            lowerContent.includes("lambda invocation")) {
             updateSubwayGraph({ modify: "completed", create: "in_progress" });
         }
-        if (lowerContent.includes("lambda") && (lowerContent.includes("success") || lowerContent.includes("invoked"))) {
+        if (lowerContent.includes("lambda") && (lowerContent.includes("success") || lowerContent.includes("successfully"))) {
             updateSubwayGraph({ create: "completed", monitor: "in_progress" });
         }
 
-        // Monitor step
-        if (lowerContent.includes("monitoring") || lowerContent.includes("background") || lowerContent.includes("10-12 minutes")) {
+        // Monitor step - waiting for cluster
+        if (lowerContent.includes("monitoring") ||
+            lowerContent.includes("background") ||
+            lowerContent.includes("10-12 minutes") ||
+            lowerContent.includes("being created in the background") ||
+            lowerContent.includes("automatically revert")) {
             updateSubwayGraph({ create: "completed", monitor: "in_progress" });
+        }
+
+        // Complete step - cluster ready or reverted
+        if (lowerContent.includes("cluster is ready") || lowerContent.includes("cluster is running") ||
+            lowerContent.includes("reverted to original")) {
+            updateSubwayGraph({ monitor: "completed" });
         }
     }
 
