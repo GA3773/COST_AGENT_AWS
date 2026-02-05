@@ -18,7 +18,7 @@ ALL_TOOLS = [
     collect_node_metrics,
     get_param_store_config,
     modify_param_store,
-    revert_param_store,
+    # revert_param_store - NOT exposed to LLM; background monitor handles revert
     invoke_cluster_lambda,
     check_cluster_status,
     check_optimization_status,
