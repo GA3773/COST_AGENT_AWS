@@ -16,16 +16,20 @@ audit = get_logger("audit.param_store")
 @with_backoff
 def _get_parameter(path: str) -> str:
     """Read raw value from Parameter Store."""
+    logger.debug(f"[PARAM_STORE] Reading parameter: {path}")
     client = get_boto3_client("ssm")
     response = client.get_parameter(Name=path, WithDecryption=True)
+    logger.debug(f"[PARAM_STORE] Successfully read parameter: {path}")
     return response["Parameter"]["Value"]
 
 
 @with_backoff
 def _put_parameter(path: str, value: str) -> None:
     """Write value to Parameter Store."""
+    logger.info(f"[PARAM_STORE] Writing parameter: {path}")
     client = get_boto3_client("ssm")
     client.put_parameter(Name=path, Value=value, Type="String", Overwrite=True)
+    logger.info(f"[PARAM_STORE] Successfully wrote parameter: {path}")
 
 
 @tool
@@ -39,6 +43,8 @@ def get_param_store_config(cluster_name: str) -> dict:
         Dict with 'raw_value' (original string) and 'config' (parsed dict)
     """
     path = f"{PARAM_STORE_PREFIX}{cluster_name}"
+    logger.info(f"[PARAM_STORE] GET config for cluster={cluster_name}, path={path}")
+
     raw_value = _get_parameter(path)
 
     audit.info(
@@ -51,6 +57,7 @@ def get_param_store_config(cluster_name: str) -> dict:
     )
 
     config = json.loads(raw_value)
+    logger.info(f"[PARAM_STORE] GET success: cluster={cluster_name}, path={path}")
     return {"raw_value": raw_value, "config": config, "param_path": path}
 
 
@@ -73,6 +80,10 @@ def modify_param_store(cluster_name: str, core_instance_type: str = "",
         Summary of changes made.
     """
     path = f"{PARAM_STORE_PREFIX}{cluster_name}"
+    logger.info(f"[PARAM_STORE] MODIFY starting: cluster={cluster_name}, path={path}")
+    logger.info(f"[PARAM_STORE] MODIFY params: core_type={core_instance_type or 'unchanged'}, "
+                f"task_type={task_instance_type or 'unchanged'}, graviton_ami={update_graviton_ami}")
+
     raw_value = _get_parameter(path)
     config = json.loads(raw_value)
 
@@ -110,6 +121,8 @@ def modify_param_store(cluster_name: str, core_instance_type: str = "",
     # Write back: re-serialize Instances as JSON string within config
     config["Instances"] = json.dumps(instances)
     new_raw = json.dumps(config)
+
+    logger.info(f"[PARAM_STORE] MODIFY writing changes to path={path}: {changes}")
     _put_parameter(path, new_raw)
 
     audit.info(
@@ -122,6 +135,7 @@ def modify_param_store(cluster_name: str, core_instance_type: str = "",
         }},
     )
 
+    logger.info(f"[PARAM_STORE] MODIFY complete: cluster={cluster_name}, path={path}, changes={changes}")
     return f"Modified Parameter Store for {cluster_name}: " + "; ".join(changes)
 
 
@@ -139,6 +153,7 @@ def revert_param_store(cluster_name: str, original_value: str) -> str:
         Confirmation of revert.
     """
     path = f"{PARAM_STORE_PREFIX}{cluster_name}"
+    logger.info(f"[PARAM_STORE] REVERT starting: cluster={cluster_name}, path={path}")
 
     try:
         _put_parameter(path, original_value)
@@ -151,6 +166,7 @@ def revert_param_store(cluster_name: str, original_value: str) -> str:
                 "success": True,
             }},
         )
+        logger.info(f"[PARAM_STORE] REVERT success: cluster={cluster_name}, path={path}")
         return f"Successfully reverted Parameter Store for {cluster_name} to original config."
     except Exception as e:
         audit.error(
@@ -163,4 +179,5 @@ def revert_param_store(cluster_name: str, original_value: str) -> str:
                 "error": str(e),
             }},
         )
+        logger.error(f"[PARAM_STORE] REVERT FAILED: cluster={cluster_name}, path={path}, error={e}")
         return f"FAILED to revert Parameter Store for {cluster_name}: {e}"
