@@ -107,10 +107,16 @@ def modify_param_store(cluster_name: str, core_instance_type: str = "",
             new_type = task_instance_type
 
         if new_type:
-            for type_config in fleet.get("InstanceTypeConfigs", []):
-                old_type = type_config.get("InstanceType", "")
-                type_config["InstanceType"] = new_type
+            type_configs = fleet.get("InstanceTypeConfigs", [])
+            if type_configs:
+                # Only modify the FIRST (primary) instance type config
+                # Secondary/fallback options are left unchanged to avoid duplicates
+                old_type = type_configs[0].get("InstanceType", "")
+                type_configs[0]["InstanceType"] = new_type
                 changes.append(f"{fleet_type}: {old_type} -> {new_type}")
+                if len(type_configs) > 1:
+                    logger.info(f"[PARAM_STORE] Fleet {fleet_type} has {len(type_configs)} instance configs, "
+                                f"only modified primary (index 0), secondary options unchanged")
 
     # Update GravitonAmi flag if needed
     if update_graviton_ami is not None:
