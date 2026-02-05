@@ -1,6 +1,6 @@
 /**
  * Agent interface for EMR Cost Optimization.
- * Handles cluster listing, subway graph, and chat.
+ * Split-panel layout with sidebar cluster list and main agent view.
  */
 (function () {
     "use strict";
@@ -14,17 +14,19 @@
     var totalPages = 1;
     var selectedCluster = null;
     var statusPollInterval = null;
-    var workflowActive = false;
+    var clusters = [];
 
-    // DOM Elements - Clusters
+    // DOM Elements - Sidebar
     var btnRefresh = document.getElementById("btnRefresh");
-    var clustersBody = document.getElementById("clustersBody");
+    var clusterList = document.getElementById("clusterList");
+    var clusterCount = document.getElementById("clusterCount");
     var paginationInfo = document.getElementById("paginationInfo");
     var btnPrev = document.getElementById("btnPrev");
     var btnNext = document.getElementById("btnNext");
 
-    // DOM Elements - Agent Panel
-    var agentPanel = document.getElementById("agentPanel");
+    // DOM Elements - Main Panel
+    var emptyState = document.getElementById("emptyState");
+    var agentView = document.getElementById("agentView");
     var selectedClusterName = document.getElementById("selectedClusterName");
     var btnClosePanel = document.getElementById("btnClosePanel");
     var subwayGraph = document.getElementById("subwayGraph");
@@ -88,78 +90,104 @@
     // ========== Cluster List ==========
 
     function loadClusters() {
-        clustersBody.innerHTML = '<tr><td colspan="6" class="clusters__loading">Loading clusters...</td></tr>';
-        paginationInfo.textContent = "Loading...";
+        clusterList.innerHTML = '<div class="cluster-list__loading">Loading...</div>';
 
         fetch("/api/clusters?page=" + currentPage + "&per_page=20")
             .then(function (res) { return res.json(); })
             .then(function (data) {
                 if (data.error) {
-                    clustersBody.innerHTML = '<tr><td colspan="6" class="clusters__empty">Error: ' + data.error + '</td></tr>';
+                    clusterList.innerHTML = '<div class="cluster-list__loading">Error loading clusters</div>';
                     return;
                 }
+                clusters = data.clusters;
                 renderClusters(data.clusters);
                 totalPages = data.pages;
-                paginationInfo.textContent = "Page " + data.page + " of " + data.pages + " (" + data.total + " clusters)";
+                clusterCount.textContent = data.total;
+                paginationInfo.textContent = data.page + "/" + data.pages;
                 btnPrev.disabled = data.page <= 1;
                 btnNext.disabled = data.page >= data.pages;
             })
             .catch(function (err) {
-                clustersBody.innerHTML = '<tr><td colspan="6" class="clusters__empty">Failed to load clusters</td></tr>';
+                clusterList.innerHTML = '<div class="cluster-list__loading">Failed to load</div>';
                 console.error("Load clusters error:", err);
             });
     }
 
-    function renderClusters(clusters) {
-        if (!clusters || clusters.length === 0) {
-            clustersBody.innerHTML = '<tr><td colspan="6" class="clusters__empty">No transient clusters found</td></tr>';
+    function renderClusters(clusterData) {
+        if (!clusterData || clusterData.length === 0) {
+            clusterList.innerHTML = '<div class="cluster-list__loading">No clusters found</div>';
             return;
         }
 
-        var html = clusters.map(function (c) {
+        var html = clusterData.map(function (c) {
             var statusClass = c.state === "TERMINATED" ? "terminated" : "completed";
-            var endTime = formatDateTime(c.ended);
-            return '<tr>' +
-                '<td>' + escapeHtml(c.name) + '</td>' +
-                '<td>' + escapeHtml(c.cluster_id) + '</td>' +
-                '<td>' + c.runtime_hours.toFixed(1) + ' hrs</td>' +
-                '<td><span class="cluster-status cluster-status--' + statusClass + '">' + c.state + '</span></td>' +
-                '<td>' + endTime + '</td>' +
-                '<td><button class="btn btn--optimize" onclick="window.selectCluster(\'' + escapeHtml(c.name) + '\')">Optimize</button></td>' +
-                '</tr>';
+            var isSelected = selectedCluster === c.name;
+            var selectedClass = isSelected ? " cluster-item--selected" : "";
+            return '<div class="cluster-item' + selectedClass + '" data-cluster="' + escapeAttr(c.name) + '">' +
+                '<div class="cluster-item__indicator cluster-item__indicator--' + statusClass + '"></div>' +
+                '<div class="cluster-item__info">' +
+                '<div class="cluster-item__name">' + escapeHtml(c.name) + '</div>' +
+                '<div class="cluster-item__meta">' + c.runtime_hours.toFixed(1) + 'h · ' + formatTime(c.ended) + '</div>' +
+                '</div>' +
+                '</div>';
         }).join("");
 
-        clustersBody.innerHTML = html;
+        clusterList.innerHTML = html;
+
+        // Bind click handlers
+        var items = clusterList.querySelectorAll(".cluster-item");
+        items.forEach(function (item) {
+            item.addEventListener("click", function () {
+                var name = item.getAttribute("data-cluster");
+                selectCluster(name);
+            });
+        });
     }
 
-    // Expose to window for onclick handler
-    window.selectCluster = function (clusterName) {
+    function selectCluster(clusterName) {
         selectedCluster = clusterName;
+
+        // Update selection in list
+        var items = clusterList.querySelectorAll(".cluster-item");
+        items.forEach(function (item) {
+            if (item.getAttribute("data-cluster") === clusterName) {
+                item.classList.add("cluster-item--selected");
+            } else {
+                item.classList.remove("cluster-item--selected");
+            }
+        });
+
         openAgentPanel(clusterName);
-    };
+    }
 
     // ========== Agent Panel ==========
 
     function openAgentPanel(clusterName) {
         selectedClusterName.textContent = clusterName;
-        agentPanel.style.display = "flex";
+        emptyState.style.display = "none";
+        agentView.style.display = "flex";
         resetSubwayGraph();
         clearMessages();
-        appendMessage("agent", "Ready to analyze **" + clusterName + "**. Type 'analyze' to see utilization metrics and recommendations, or ask any question about this cluster.");
+        appendMessage("agent", "Ready to analyze **" + clusterName + "**.\n\nType `analyze` to see utilization metrics and recommendations, or ask any question about this cluster.");
         inputEl.focus();
 
         // Start a new session for this cluster
         sessionId = null;
-
-        // Start polling for status if workflow might be active
         startStatusPolling();
     }
 
     function closeAgentPanel() {
-        agentPanel.style.display = "none";
+        emptyState.style.display = "flex";
+        agentView.style.display = "none";
         selectedCluster = null;
         stopStatusPolling();
         closeSSE();
+
+        // Clear selection in list
+        var items = clusterList.querySelectorAll(".cluster-item");
+        items.forEach(function (item) {
+            item.classList.remove("cluster-item--selected");
+        });
     }
 
     function clearMessages() {
@@ -190,7 +218,6 @@
             var node = subwayGraph.querySelector('[data-step="' + step + '"]');
             if (!node) return;
 
-            // Remove previous state classes
             node.classList.remove("subway-node--completed", "subway-node--in_progress", "subway-node--error");
 
             if (status === "completed") {
@@ -201,10 +228,9 @@
             } else if (status === "error") {
                 node.classList.add("subway-node--error");
             }
-            // phase2 nodes keep their default dashed style
         });
 
-        // Update connectors - mark completed up to last completed node
+        // Update connectors
         var connectors = subwayGraph.querySelectorAll(".subway-connector:not(.subway-connector--phase2)");
         connectors.forEach(function (conn, index) {
             conn.classList.remove("subway-connector--completed");
@@ -218,8 +244,7 @@
 
     function startStatusPolling() {
         stopStatusPolling();
-        pollStatus(); // Immediate first poll
-        statusPollInterval = setInterval(pollStatus, 30000); // 30 second interval
+        statusPollInterval = setInterval(pollStatus, 30000);
     }
 
     function stopStatusPolling() {
@@ -238,9 +263,6 @@
                 if (data.steps) {
                     updateSubwayGraph(data.steps);
                 }
-                workflowActive = data.active;
-
-                // If monitoring is active, show status in progress bar
                 if (data.monitor_details && data.active) {
                     showProgress(data.monitor_details.message || "Monitoring cluster...");
                 }
@@ -256,11 +278,13 @@
         var text = inputEl.value.trim();
         if (!text || inputLocked) return;
 
-        // If cluster is selected and user types something simple, prepend context
-        if (selectedCluster && text.toLowerCase() === "analyze") {
-            text = "Analyze cluster " + selectedCluster;
-        } else if (selectedCluster && text.toLowerCase() === "optimize") {
-            text = "Optimize cluster " + selectedCluster;
+        // Smart commands
+        if (selectedCluster) {
+            if (text.toLowerCase() === "analyze") {
+                text = "Analyze cluster " + selectedCluster;
+            } else if (text.toLowerCase() === "optimize") {
+                text = "Optimize cluster " + selectedCluster;
+            }
         }
 
         appendMessage("user", text);
@@ -301,10 +325,17 @@
         approvalEl.style.display = "none";
         showProgress(approved ? "Executing optimization..." : "Cancelling...");
 
-        // Mark workflow as active and update subway graph
         if (approved) {
-            workflowActive = true;
-            updateSubwayGraph({ backup: "in_progress", modify: "pending", create: "pending", monitor: "pending", revert: "pending", clone: "phase2", run: "phase2", compare: "phase2" });
+            updateSubwayGraph({
+                backup: "in_progress",
+                modify: "pending",
+                create: "pending",
+                monitor: "pending",
+                revert: "pending",
+                clone: "phase2",
+                run: "phase2",
+                compare: "phase2"
+            });
         }
 
         fetch("/api/agent/approve", {
@@ -368,7 +399,7 @@
                     hideProgress();
                     setInputEnabled(true);
                     closeSSE();
-                    pollStatus(); // Final status update
+                    pollStatus();
                     break;
                 case "error":
                     appendMessage("agent", "Error: " + data.content);
@@ -430,7 +461,6 @@
         };
         progressText.textContent = labels[phase] || phase;
 
-        // Update subway graph based on phase
         var phaseToStep = {
             backed_up: { backup: "completed" },
             modified: { backup: "completed", modify: "completed" },
@@ -442,7 +472,11 @@
 
         var stepUpdate = phaseToStep[phase];
         if (stepUpdate) {
-            var currentSteps = { backup: "pending", modify: "pending", create: "pending", monitor: "pending", revert: "pending", clone: "phase2", run: "phase2", compare: "phase2" };
+            var currentSteps = {
+                backup: "pending", modify: "pending", create: "pending",
+                monitor: "pending", revert: "pending",
+                clone: "phase2", run: "phase2", compare: "phase2"
+            };
             Object.assign(currentSteps, stepUpdate);
             updateSubwayGraph(currentSteps);
         }
@@ -505,13 +539,17 @@
         return div.innerHTML;
     }
 
-    function formatDateTime(isoString) {
+    function escapeAttr(text) {
+        return text.replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+    }
+
+    function formatTime(isoString) {
         if (!isoString) return "-";
         try {
             var date = new Date(isoString);
-            return date.toLocaleDateString() + " " + date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+            return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
         } catch (e) {
-            return isoString;
+            return "-";
         }
     }
 })();
