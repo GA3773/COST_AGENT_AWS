@@ -53,6 +53,7 @@ def analyze_cluster(cluster_name: str) -> str:
             runtime_hours=runtime_hours,
         )
         results["core_analysis"] = core_analysis
+        results["config_type"] = core_metrics.get("config_type", "unknown")
     else:
         results["core_analysis"] = {"error": core_metrics["error"]}
 
@@ -83,9 +84,11 @@ def _format_status_label(status: str) -> str:
 
 def _format_analysis(results: dict) -> str:
     """Format analysis results with per-dimension breakdown, costs, and alternatives."""
+    config_type = results.get("config_type", "unknown")
+    config_label = "Instance Fleets" if config_type == "fleets" else "Instance Groups" if config_type == "groups" else config_type
     lines = [
         f"Analysis for {results['cluster_name']} ({results['cluster_id']})",
-        f"Runtime: {results['runtime_hours']}h",
+        f"Runtime: {results['runtime_hours']}h | Config: {config_label}",
         "",
     ]
 

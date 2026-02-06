@@ -36,19 +36,83 @@ def describe_cluster(cluster_id: str) -> dict:
 
 @with_backoff
 def list_instance_fleets(cluster_id: str) -> list[dict]:
-    """Get instance fleet configurations for a cluster."""
+    """Get instance fleet configurations for a cluster.
+
+    Raises ClientError if cluster uses Instance Groups instead.
+    """
     client = get_boto3_client("emr")
     response = client.list_instance_fleets(ClusterId=cluster_id)
     return response.get("InstanceFleets", [])
 
 
 @with_backoff
-def list_instances(cluster_id: str, instance_fleet_id: str = None) -> list[dict]:
-    """Get EC2 instances for a cluster, optionally filtered by fleet."""
+def list_instance_groups(cluster_id: str) -> list[dict]:
+    """Get instance group configurations for a cluster.
+
+    Raises ClientError if cluster uses Instance Fleets instead.
+    """
+    client = get_boto3_client("emr")
+    response = client.list_instance_groups(ClusterId=cluster_id)
+    return response.get("InstanceGroups", [])
+
+
+def get_cluster_instance_config(cluster_id: str) -> dict:
+    """Get instance configuration for a cluster, detecting fleets vs groups.
+
+    Returns:
+        {
+            "type": "fleets" | "groups",
+            "configs": list of fleet or group configs
+        }
+    """
+    # Try fleets first
+    try:
+        fleets = list_instance_fleets(cluster_id)
+        if fleets:
+            logger.info(f"[EMR] Cluster {cluster_id} uses Instance Fleets")
+            return {"type": "fleets", "configs": fleets}
+    except Exception as e:
+        if "instance groups" in str(e).lower():
+            logger.info(f"[EMR] Cluster {cluster_id} uses Instance Groups (detected from fleet error)")
+        else:
+            logger.warning(f"[EMR] list_instance_fleets failed: {e}")
+
+    # Fall back to groups
+    try:
+        groups = list_instance_groups(cluster_id)
+        if groups:
+            logger.info(f"[EMR] Cluster {cluster_id} uses Instance Groups")
+            return {"type": "groups", "configs": groups}
+    except Exception as e:
+        logger.error(f"[EMR] list_instance_groups also failed: {e}")
+        raise
+
+    return {"type": "unknown", "configs": []}
+
+
+@with_backoff
+def list_instances(
+    cluster_id: str,
+    instance_fleet_id: str = None,
+    instance_group_id: str = None,
+    instance_group_types: list[str] = None,
+) -> list[dict]:
+    """Get EC2 instances for a cluster, optionally filtered by fleet/group.
+
+    Args:
+        cluster_id: The EMR cluster ID
+        instance_fleet_id: Filter by fleet ID (for fleet-based clusters)
+        instance_group_id: Filter by group ID (for group-based clusters)
+        instance_group_types: Filter by group types like ['CORE', 'TASK']
+    """
     client = get_boto3_client("emr")
     params = {"ClusterId": cluster_id}
     if instance_fleet_id:
         params["InstanceFleetId"] = instance_fleet_id
+    if instance_group_id:
+        params["InstanceGroupId"] = instance_group_id
+    if instance_group_types:
+        params["InstanceGroupTypes"] = instance_group_types
 
     instances = []
     while True:

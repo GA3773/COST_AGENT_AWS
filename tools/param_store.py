@@ -32,6 +32,21 @@ def _put_parameter(path: str, value: str) -> None:
     logger.info(f"[PARAM_STORE] Successfully wrote parameter: {path}")
 
 
+def _detect_config_type(instances: dict) -> str:
+    """Detect whether config uses InstanceFleets or InstanceGroups."""
+    if instances.get("InstanceFleets"):
+        return "fleets"
+    elif instances.get("InstanceGroups"):
+        return "groups"
+    else:
+        # Check for singular keys too
+        if instances.get("InstanceFleet"):
+            return "fleets"
+        elif instances.get("InstanceGroup"):
+            return "groups"
+    return "unknown"
+
+
 @tool
 def get_param_store_config(cluster_name: str) -> dict:
     """Read the EMR cluster configuration from AWS Parameter Store.
@@ -40,7 +55,11 @@ def get_param_store_config(cluster_name: str) -> dict:
         cluster_name: The cluster name (maps to Parameter Store key)
 
     Returns:
-        Dict with 'raw_value' (original string) and 'config' (parsed dict)
+        Dict with:
+        - 'raw_value': Original string (use this for revert)
+        - 'config': Parsed dict
+        - 'config_type': 'fleets' or 'groups'
+        - 'param_path': Full parameter path
     """
     path = f"{PARAM_STORE_PREFIX}{cluster_name}"
     logger.info(f"[PARAM_STORE] GET config for cluster={cluster_name}, path={path}")
@@ -57,23 +76,38 @@ def get_param_store_config(cluster_name: str) -> dict:
     )
 
     config = json.loads(raw_value)
-    logger.info(f"[PARAM_STORE] GET success: cluster={cluster_name}, path={path}")
-    return {"raw_value": raw_value, "config": config, "param_path": path}
+
+    # Parse Instances to detect config type
+    instances_str = config.get("Instances", "{}")
+    if isinstance(instances_str, str):
+        instances = json.loads(instances_str)
+    else:
+        instances = instances_str
+
+    config_type = _detect_config_type(instances)
+
+    logger.info(f"[PARAM_STORE] GET success: cluster={cluster_name}, config_type={config_type}")
+    return {
+        "raw_value": raw_value,
+        "config": config,
+        "config_type": config_type,
+        "param_path": path,
+    }
 
 
 @tool
 def modify_param_store(cluster_name: str, core_instance_type: str = "",
                        task_instance_type: str = "",
                        update_graviton_ami: bool | None = None) -> str:
-    """Modify instance types in Parameter Store config for CORE and/or TASK fleets.
+    """Modify instance types in Parameter Store config for CORE and/or TASK nodes.
 
-    Only changes InstanceType values within InstanceTypeConfigs for CORE and TASK
-    fleets. Everything else (EBS, capacity, subnets, etc.) remains unchanged.
+    Supports both Instance Fleets and Instance Groups based configurations.
+    Only changes InstanceType values. Everything else (EBS, capacity, etc.) remains unchanged.
 
     Args:
         cluster_name: The cluster name
-        core_instance_type: New instance type for CORE fleet (empty string to skip)
-        task_instance_type: New instance type for TASK fleet (empty string to skip)
+        core_instance_type: New instance type for CORE (empty string to skip)
+        task_instance_type: New instance type for TASK (empty string to skip)
         update_graviton_ami: If set, update the GravitonAmi flag
 
     Returns:
@@ -95,6 +129,50 @@ def modify_param_store(cluster_name: str, core_instance_type: str = "",
         instances = instances_str
 
     changes = []
+    config_type = _detect_config_type(instances)
+
+    if config_type == "fleets":
+        changes = _modify_fleets(instances, core_instance_type, task_instance_type)
+    elif config_type == "groups":
+        changes = _modify_groups(instances, core_instance_type, task_instance_type)
+    else:
+        logger.error(f"[PARAM_STORE] Unknown config type for cluster={cluster_name}")
+        return f"Error: Could not detect InstanceFleets or InstanceGroups in config for {cluster_name}"
+
+    # Update GravitonAmi flag if needed
+    if update_graviton_ami is not None:
+        old_flag = config.get("GravitonAmi")
+        config["GravitonAmi"] = update_graviton_ami
+        changes.append(f"GravitonAmi: {old_flag} -> {update_graviton_ami}")
+
+    if not changes:
+        return f"No changes made to Parameter Store for {cluster_name}"
+
+    # Write back: re-serialize Instances as JSON string within config
+    config["Instances"] = json.dumps(instances)
+    new_raw = json.dumps(config)
+
+    logger.info(f"[PARAM_STORE] MODIFY writing changes to path={path}: {changes}")
+    _put_parameter(path, new_raw)
+
+    audit.info(
+        "Parameter Store modified",
+        extra={"audit_data": {
+            "event": "param_store_modify",
+            "cluster_name": cluster_name,
+            "param_path": path,
+            "config_type": config_type,
+            "changes": changes,
+        }},
+    )
+
+    logger.info(f"[PARAM_STORE] MODIFY complete: cluster={cluster_name}, config_type={config_type}, changes={changes}")
+    return f"Modified Parameter Store for {cluster_name} ({config_type}): " + "; ".join(changes)
+
+
+def _modify_fleets(instances: dict, core_instance_type: str, task_instance_type: str) -> list:
+    """Modify instance types in InstanceFleets configuration."""
+    changes = []
     fleets = instances.get("InstanceFleets", [])
 
     for fleet in fleets:
@@ -113,36 +191,34 @@ def modify_param_store(cluster_name: str, core_instance_type: str = "",
                 # Secondary/fallback options are left unchanged to avoid duplicates
                 old_type = type_configs[0].get("InstanceType", "")
                 type_configs[0]["InstanceType"] = new_type
-                changes.append(f"{fleet_type}: {old_type} -> {new_type}")
+                changes.append(f"{fleet_type} Fleet: {old_type} -> {new_type}")
                 if len(type_configs) > 1:
                     logger.info(f"[PARAM_STORE] Fleet {fleet_type} has {len(type_configs)} instance configs, "
                                 f"only modified primary (index 0), secondary options unchanged")
 
-    # Update GravitonAmi flag if needed
-    if update_graviton_ami is not None:
-        old_flag = config.get("GravitonAmi")
-        config["GravitonAmi"] = update_graviton_ami
-        changes.append(f"GravitonAmi: {old_flag} -> {update_graviton_ami}")
+    return changes
 
-    # Write back: re-serialize Instances as JSON string within config
-    config["Instances"] = json.dumps(instances)
-    new_raw = json.dumps(config)
 
-    logger.info(f"[PARAM_STORE] MODIFY writing changes to path={path}: {changes}")
-    _put_parameter(path, new_raw)
+def _modify_groups(instances: dict, core_instance_type: str, task_instance_type: str) -> list:
+    """Modify instance types in InstanceGroups configuration."""
+    changes = []
+    groups = instances.get("InstanceGroups", [])
 
-    audit.info(
-        "Parameter Store modified",
-        extra={"audit_data": {
-            "event": "param_store_modify",
-            "cluster_name": cluster_name,
-            "param_path": path,
-            "changes": changes,
-        }},
-    )
+    for group in groups:
+        group_type = group.get("InstanceRole", "")
+        new_type = None
 
-    logger.info(f"[PARAM_STORE] MODIFY complete: cluster={cluster_name}, path={path}, changes={changes}")
-    return f"Modified Parameter Store for {cluster_name}: " + "; ".join(changes)
+        if group_type == "CORE" and core_instance_type:
+            new_type = core_instance_type
+        elif group_type == "TASK" and task_instance_type:
+            new_type = task_instance_type
+
+        if new_type:
+            old_type = group.get("InstanceType", "")
+            group["InstanceType"] = new_type
+            changes.append(f"{group_type} Group: {old_type} -> {new_type}")
+
+    return changes
 
 
 @tool
