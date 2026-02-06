@@ -5,17 +5,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
 
-from agent.nodes import (
-    backup_node,
-    call_agent,
-    create_node,
-    initialize_node,
-    modify_node,
-    report_node,
-    revert_node,
-    route_agent,
-    # wait_node removed - background monitor handles waiting and revert
-)
+from agent.nodes import call_agent, initialize_node
 from agent.prompts import SYSTEM_PROMPT
 from agent.state import AgentState
 from services.azure_openai import create_llm
@@ -25,8 +15,14 @@ from tools import ALL_TOOLS
 def build_graph():
     """Build and compile the LangGraph agent workflow.
 
+    The graph is now simplified to let the LLM decide the workflow:
+    - LLM can call tools in any order based on user intent
+    - For "full optimization": read config → modify → invoke Lambda
+    - For "modify only": read config → modify → done
+    - For "just analyze": analyze → present recommendations
+
     Returns:
-        Compiled graph with MemorySaver checkpointer for interrupt/resume.
+        Compiled graph with MemorySaver checkpointer.
     """
     # Create LLM with hybrid auth (Service Principal + API key)
     llm = create_llm()
@@ -45,6 +41,8 @@ def build_graph():
             context_parts.append(f"Current cluster: {state['cluster_name']}")
         if state.get("cluster_id"):
             context_parts.append(f"Cluster ID: {state['cluster_id']}")
+        if state.get("original_config_backup"):
+            context_parts.append("Original config: **backed up** (available for revert)")
         if state.get("new_cluster_id"):
             context_parts.append(f"New (optimized) cluster ID: {state['new_cluster_id']}")
         if state.get("optimization_status"):
@@ -72,19 +70,23 @@ def build_graph():
 
         return call_agent(state, llm_with_tools)
 
-    # Build graph
+    def route_agent(state: dict) -> str:
+        """Route based on the last message: tool_calls -> tools, otherwise -> end."""
+        last_msg = state["messages"][-1]
+
+        # If the LLM wants to call tools, route to tools
+        if hasattr(last_msg, "tool_calls") and last_msg.tool_calls:
+            return "tools"
+
+        return "end"
+
+    # Build graph - simplified to agent ↔ tools loop
     graph = StateGraph(AgentState)
 
     # Add nodes
     graph.add_node("initialize", initialize_node)
     graph.add_node("agent", agent_node)
     graph.add_node("tools", ToolNode(ALL_TOOLS))
-    graph.add_node("backup", backup_node)
-    graph.add_node("modify", modify_node)
-    graph.add_node("create", create_node)
-    # wait_node removed - background monitor handles waiting
-    graph.add_node("revert", revert_node)  # Only used for error paths
-    graph.add_node("report", report_node)
 
     # Set entry point
     graph.set_entry_point("initialize")
@@ -92,48 +94,17 @@ def build_graph():
     # Edges
     graph.add_edge("initialize", "agent")
 
-    # Agent routing
+    # Agent routing: tools or end
     graph.add_conditional_edges("agent", route_agent, {
         "tools": "tools",
-        "backup": "backup",
         "end": END,
     })
 
     # Tools loop back to agent
     graph.add_edge("tools", "agent")
 
-    # Execution pipeline (async flow):
-    # backup -> modify -> create -> report -> END
-    # The create_node starts a background monitor that handles waiting and revert.
-    # Revert node is only used for error paths (modify fails before Lambda is called).
-    graph.add_edge("backup", "modify")
-
-    # Modify can error -> jump to revert, otherwise create
-    def modify_route(state: dict) -> str:
-        return "revert" if state.get("error") else "create"
-    graph.add_conditional_edges("modify", modify_route, {
-        "create": "create",
-        "revert": "revert",
-    })
-
-    # Create: on success -> report (background monitor handles revert)
-    #         on error -> revert (need to restore config immediately)
-    def create_route(state: dict) -> str:
-        return "revert" if state.get("error") else "report"
-    graph.add_conditional_edges("create", create_route, {
-        "report": "report",
-        "revert": "revert",
-    })
-
-    # Revert (error path only) -> report
-    graph.add_edge("revert", "report")
-    graph.add_edge("report", END)
-
-    # Compile with checkpointer and interrupt before backup (approval gate)
+    # Compile with checkpointer (no interrupt - LLM asks for confirmation via conversation)
     checkpointer = MemorySaver()
-    compiled = graph.compile(
-        checkpointer=checkpointer,
-        interrupt_before=["backup"],
-    )
+    compiled = graph.compile(checkpointer=checkpointer)
 
     return compiled
